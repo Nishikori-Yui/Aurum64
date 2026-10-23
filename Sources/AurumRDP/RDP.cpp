@@ -17,6 +17,8 @@ void Decoder::reset() {
     firstSubmissions.fill(std::numeric_limits<uint64_t>::max());
     firstVIs.fill(std::numeric_limits<uint64_t>::max());
     submissions = 0; viEvents = 0; currentVI = 1;
+    commandBaseline = unsupportedBaseline = 0;
+    recentCommandCount = recentUnsupportedCount = 0;
     address = width = size = format = color = cycle = 0;
     sx0 = sy0 = sx1 = sy1 = 0;
 }
@@ -33,7 +35,14 @@ uint64_t Decoder::firstVI(uint8_t opcode) const {
     return opcode < firstVIs.size() ? firstVIs[opcode] : std::numeric_limits<uint64_t>::max();
 }
 void Decoder::beginSubmission() { ++submissions; }
-void Decoder::beginVI() { ++viEvents; currentVI = viEvents + 1; }
+void Decoder::beginVI() {
+    recentCommandCount = commands - commandBaseline;
+    recentUnsupportedCount = unsupported - unsupportedBaseline;
+    commandBaseline = commands;
+    unsupportedBaseline = unsupported;
+    ++viEvents;
+    currentVI = viEvents + 1;
+}
 void Decoder::push(std::span<const uint32_t> words) {
     pending.insert(pending.end(), words.begin(), words.end());
     size_t used = 0;

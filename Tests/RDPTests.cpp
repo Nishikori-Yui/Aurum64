@@ -38,6 +38,9 @@ int main(int argc, char** argv) {
                 "Fill opcode statistics");
         require(decoder.submissionCount() == 1 && decoder.firstSubmission(0x3f) == 1 &&
                 decoder.firstVI(0x3f) == 1, "Submission and VI statistics");
+        decoder.beginVI();
+        require(decoder.recentCommands() == 6 && decoder.recentUnsupported() == 0,
+                "Recent VI sample statistics");
         require(decoder.opcodeCount(0x00) == 0 && decoder.firstCommand(0x00) == UINT64_MAX,
                 "Absent opcode statistics");
         require(decoder.unsupported == 0, "Supported fill stream marked unsupported");

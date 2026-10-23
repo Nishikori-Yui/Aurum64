@@ -22,7 +22,8 @@ void publishDiagnostics() {
         vis[opcode] = decoder.firstVI(opcode);
     }
     aur_publish_rdp_diagnostics(counts, submissions, vis,
-                                decoder.submissionCount(), decoder.viCount());
+                                decoder.submissionCount(), decoder.viCount(),
+                                decoder.recentCommands(), decoder.recentUnsupported());
 }
 size_t memorySize() { return info.RDRAM_SIZE ? *info.RDRAM_SIZE : 8 * 1024 * 1024; }
 }

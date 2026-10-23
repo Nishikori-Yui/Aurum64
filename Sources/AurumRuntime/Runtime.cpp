@@ -37,6 +37,7 @@ std::array<uint64_t, 64> opcodeCounts{};
 std::array<uint64_t, 64> firstOpcodeSubmission{};
 std::array<uint64_t, 64> firstOpcodeVI{};
 uint64_t rdpSubmissions = 0, viEvents = 0;
+uint64_t recentRdpCommands = 0, recentUnsupportedCommands = 0;
 bool failed = false;
 std::atomic<bool> pendingCommands{false};
 void serviceCommands();
@@ -163,6 +164,7 @@ int aur_start(const char* rom, const char* frameworks, const char* resources, co
         firstOpcodeSubmission.fill(UINT64_MAX);
         firstOpcodeVI.fill(UINT64_MAX);
         rdpSubmissions = viEvents = 0;
+        recentRdpCommands = recentUnsupportedCommands = 0;
         shaderPath = std::string(resources) + "/AurumRDP.metallib";
     }
     // Swift's temporary C strings expire when aur_start returns. Construct owned
@@ -192,6 +194,8 @@ int aur_diagnostics(AurDiagnostics* out, size_t size) {
     result.audioFrames = snapshot.audioFrames;
     result.rdpSubmissions = rdpSubmissions;
     result.viEvents = viEvents;
+    result.recentRdpCommands = recentRdpCommands;
+    result.recentUnsupportedCommands = recentUnsupportedCommands;
     std::memcpy(result.opcodeCounts, opcodeCounts.data(), sizeof(result.opcodeCounts));
     std::memcpy(result.firstOpcodeSubmission, firstOpcodeSubmission.data(), sizeof(result.firstOpcodeSubmission));
     std::memcpy(result.firstOpcodeVI, firstOpcodeVI.data(), sizeof(result.firstOpcodeVI));
@@ -220,7 +224,8 @@ void aur_publish_frame(const uint32_t* pixels, uint32_t width, uint32_t height, 
     snapshot.rdpCommands = count; snapshot.unsupportedCommands = unsupported;
 }
 void aur_publish_rdp_diagnostics(const uint64_t* counts, const uint64_t* submissions,
-                                 const uint64_t* firstVI, uint64_t submissionCount, uint64_t viCount) {
+                                 const uint64_t* firstVI, uint64_t submissionCount, uint64_t viCount,
+                                 uint64_t recentCommands, uint64_t recentUnsupported) {
     if (!counts || !submissions || !firstVI) return;
     std::lock_guard lock(mutex);
     std::memcpy(opcodeCounts.data(), counts, sizeof(opcodeCounts));
@@ -228,6 +233,8 @@ void aur_publish_rdp_diagnostics(const uint64_t* counts, const uint64_t* submiss
     std::memcpy(firstOpcodeVI.data(), firstVI, sizeof(firstOpcodeVI));
     rdpSubmissions = submissionCount;
     viEvents = viCount;
+    recentRdpCommands = recentCommands;
+    recentUnsupportedCommands = recentUnsupported;
 }
 void aur_video_tick() {
     {

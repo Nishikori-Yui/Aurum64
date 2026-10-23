@@ -28,6 +28,8 @@ int main(int argc, char** argv) {
         diagnostics.audioFrames != state.audioFrames ||
         diagnostics.rdpSubmissions != 1 ||
         diagnostics.viEvents != 8 ||
+        diagnostics.recentRdpCommands > diagnostics.rdpCommands ||
+        diagnostics.recentUnsupportedCommands > diagnostics.unsupportedCommands ||
         diagnostics.opcodeCounts[0x3f] != 1 ||
         diagnostics.firstOpcodeSubmission[0x3f] != 1 ||
         diagnostics.firstOpcodeVI[0x3f] != 1 ||
