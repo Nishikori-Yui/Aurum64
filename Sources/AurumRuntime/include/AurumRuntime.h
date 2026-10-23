@@ -13,6 +13,14 @@ typedef struct {
     uint64_t frames, rdpCommands, unsupportedCommands, audioFrames;
     char message[512];
 } AurSnapshot;
+enum { AUR_DIAGNOSTICS_VERSION = 1 };
+typedef struct {
+    uint32_t size;
+    uint32_t version;
+    int32_t state;
+    uint32_t width, height;
+    uint64_t frames, rdpCommands, unsupportedCommands, audioFrames;
+} AurDiagnostics;
 // Singleton core. Worker owns all upstream calls; UI uses a command mailbox.
 // All paths are copied before returning; callers need not retain their buffers.
 // Returns 0 for null/empty paths or an active session, without changing that session.
@@ -20,6 +28,9 @@ int aur_start(const char* rom, const char* frameworks, const char* resources,
               const char* userData, uint64_t frameLimit);
 void aur_command(int command);
 void aur_snapshot(AurSnapshot* result);
+// Versioned diagnostics ABI. The caller supplies the allocated size so newer
+// fields cannot silently overwrite an older consumer's buffer.
+int aur_diagnostics(AurDiagnostics* result, size_t size);
 size_t aur_copy_frame(uint32_t* output, size_t capacity, uint32_t* width, uint32_t* height);
 void aur_set_buttons(uint32_t buttons);
 uint32_t aur_get_buttons(void);

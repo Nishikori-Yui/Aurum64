@@ -168,6 +168,22 @@ void aur_command(int command) {
     commands.push_back(command); pendingCommands = true; changed.notify_all();
 }
 void aur_snapshot(AurSnapshot* out) { if (out) { std::lock_guard lock(mutex); *out = snapshot; } }
+int aur_diagnostics(AurDiagnostics* out, size_t size) {
+    if (!out || size < sizeof(AurDiagnostics)) return 0;
+    std::lock_guard lock(mutex);
+    AurDiagnostics result{};
+    result.size = sizeof(AurDiagnostics);
+    result.version = AUR_DIAGNOSTICS_VERSION;
+    result.state = snapshot.state;
+    result.width = snapshot.width;
+    result.height = snapshot.height;
+    result.frames = snapshot.frames;
+    result.rdpCommands = snapshot.rdpCommands;
+    result.unsupportedCommands = snapshot.unsupportedCommands;
+    result.audioFrames = snapshot.audioFrames;
+    std::memcpy(out, &result, sizeof(result));
+    return 1;
+}
 size_t aur_copy_frame(uint32_t* output, size_t capacity, uint32_t* width, uint32_t* height) {
     std::lock_guard lock(mutex);
     if (width) *width = snapshot.width;
