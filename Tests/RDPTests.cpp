@@ -13,6 +13,10 @@ static void require(bool value, const char* message) { if (!value) throw std::ru
 static void requireCapture(bool value, const std::string& error) {
     if (!value) throw std::runtime_error(error);
 }
+static uint32_t readBE(const uint8_t* bytes) {
+    return uint32_t(bytes[3]) | uint32_t(bytes[2]) << 8 |
+           uint32_t(bytes[1]) << 16 | uint32_t(bytes[0]) << 24;
+}
 int main(int argc, char** argv) {
     try {
         require(argc >= 2, "Usage: aurum-rdp-tests metallib [network-order.rdp]");
@@ -163,10 +167,32 @@ int main(int argc, char** argv) {
                     records.back().type == 0xffff, "Capture boundaries");
             unsigned submissions = 0, vis = 0;
             for (const auto& record : records) {
-                if (record.type == 3) ++submissions;
-                if (record.type == 4) ++vis;
+                if (record.type == 3) {
+                    ++submissions;
+                    require(record.payload.size() >= 16 &&
+                            (record.payload.size() - 16) % 4 == 0, "Capture submission payload");
+                }
+                if (record.type == 4) {
+                    ++vis;
+                    require(record.payload.size() == 28, "Capture VI payload");
+                }
             }
             require(submissions >= 1 && vis >= 1, "Capture events");
+            require(records.front().payload.size() == 8 && records.back().payload.size() == 8,
+                    "Capture initial/end payload");
+            for (unsigned repeat = 0; repeat < 20; ++repeat) {
+                decoder.reset();
+                for (const auto& record : records) {
+                    if (record.type != 3) continue;
+                    decoder.beginSubmission();
+                    for (size_t offset = 16; offset < record.payload.size(); offset += 4) {
+                        uint32_t words[1] = {readBE(record.payload.data() + offset)};
+                        decoder.push(words);
+                    }
+                }
+                require(!decoder.hasPendingWords() && decoder.commands == 6 &&
+                        decoder.unsupported == 0, "Capture replay result");
+            }
             std::printf("Capture: %zu records, %u submissions, %u VI events\n",
                         records.size(), submissions, vis);
         }
