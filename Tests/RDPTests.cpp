@@ -1,0 +1,95 @@
+// SPDX-License-Identifier: MIT
+#include "Renderer.hpp"
+#include <cstdio>
+#include <cstdlib>
+#include <fstream>
+#include <stdexcept>
+#include <string>
+#include <random>
+
+static void require(bool value, const char* message) { if (!value) throw std::runtime_error(message); }
+int main(int argc, char** argv) {
+    try {
+        require(argc >= 2, "Usage: aurum-rdp-tests metallib [network-order.rdp]");
+        using namespace aurum::rdp;
+        Renderer renderer; std::string error;
+        require(renderer.initialize(argv[1], error), error.c_str());
+        std::vector<uint32_t> ram(8 * 1024 * 1024 / 4, 0x11223344);
+        Decoder decoder; unsigned fills = 0, syncs = 0;
+        decoder.fill = [&](const Fill& fill) {
+            ++fills;
+            require(renderer.fill(reinterpret_cast<uint8_t*>(ram.data()), ram.size()*4, fill, error), error.c_str());
+        };
+        decoder.sync = [&] { ++syncs; };
+        const uint32_t commands[] = {
+            0xff100007, 0x1000, // RGBA16, stride 8
+            0xed000000, (32 << 12) | 32,
+            0xef300000, 0,
+            0xf7000000, 0xf80107c1,
+            0xf6000000 | (16 << 12) | 8, (4 << 12) | 4,
+            0xe9000000, 0};
+        // Split every word to exercise partial 64-bit commands across DMA submissions.
+        for (auto& word : commands) decoder.push(std::span(&word, 1));
+        require(fills == 1 && syncs == 1 && decoder.commands == 6, "Decoder counters");
+        require(decoder.unsupported == 0, "Supported fill stream marked unsupported");
+        for (unsigned y = 0; y < 8; ++y) for (unsigned x = 0; x < 8; ++x) {
+            uint32_t word = ram[(0x1000 + (y*8+x)*2)/4];
+            unsigned value = (word >> ((x & 1) ? 0 : 16)) & 65535;
+            unsigned expected = y >= 1 && y < 3 && x >= 1 && x < 5 ? ((x & 1) ? 0x07c1 : 0xf801)
+                                                                               : ((x & 1) ? 0x3344 : 0x1122);
+            require(value == expected, "Metal RGBA16 masked fill mismatch");
+        }
+        Fill rgba32{0x2000, 4, 3, 0x12345678, 1, 0, 3, 2};
+        require(renderer.fill(reinterpret_cast<uint8_t*>(ram.data()), ram.size()*4, rgba32, error), error.c_str());
+        require(ram[0x2000/4] == 0x11223344 && ram[0x2000/4+1] == 0x12345678, "RGBA32 fill mismatch");
+        VideoInterface vi{3, 0x2000, 4, 4, 4, 1024, 1024};
+        uint32_t w,h; std::vector<uint32_t> pixels;
+        require(renderer.scanout(reinterpret_cast<uint8_t*>(ram.data()), ram.size()*4, vi, pixels,w,h,error),error.c_str());
+        require(w == 4 && h == 2 && pixels[1] == 0xff563412, "RGBA32 VI conversion mismatch");
+        vi = {2, 0x1000, 8, 8, 16, 1024, 1024};
+        require(renderer.scanout(reinterpret_cast<uint8_t*>(ram.data()), ram.size()*4, vi,pixels,w,h,error),error.c_str());
+        require(pixels[9] == 0xff00ff00 && pixels[10] == 0xff0000ff, "RGBA5551 VI conversion mismatch");
+        const uint32_t triangle[44] = {0xcf000000};
+        decoder.push(std::span(triangle, 43));
+        require(decoder.unsupported == 0, "Partial triangle consumed too early");
+        decoder.push(std::span(triangle + 43, 1));
+        require(decoder.unsupported == 1 && Decoder::wordCount(0x24) == 4, "Unsupported opcode accounting");
+        std::mt19937 random(0x64);
+        for (unsigned trial = 0; trial < 48; ++trial) {
+            std::vector<uint32_t> actual(16384), expected;
+            for (auto& word : actual) word = random();
+            expected = actual;
+            const uint32_t pixelSize = trial & 1 ? 2 : 3, bytes = pixelSize == 2 ? 2 : 4;
+            const uint32_t stride = 1 + random() % 37;
+            Fill test{uint32_t(random() % 8192) * bytes, stride, pixelSize, uint32_t(random()),
+                      uint32_t(random() % stride), uint32_t(random() % 15), stride, 32};
+            for (uint32_t y = test.y0; y < test.y1; ++y) for (uint32_t x = test.x0; x < test.x1; ++x) {
+                const size_t address = test.address + (y * stride + x) * bytes;
+                if (address + bytes > expected.size() * 4) continue;
+                if (bytes == 4) expected[address / 4] = test.color;
+                else {
+                    const auto shift = address % 4 ? 0 : 16;
+                    expected[address / 4] = (expected[address / 4] & ~(65535u << shift)) | (test.color & (65535u << shift));
+                }
+            }
+            require(renderer.fill(reinterpret_cast<uint8_t*>(actual.data()), actual.size() * 4, test, error), error.c_str());
+            require(actual == expected, "Randomized Metal fill differs from scalar byte-address reference");
+        }
+        Fill invalid{0, 0, 2, 0, 0, 0, 1, 1};
+        require(!renderer.fill(reinterpret_cast<uint8_t*>(ram.data()), ram.size()*4, invalid, error), "Zero stride accepted");
+        invalid.width = 1; invalid.address = 1;
+        require(!renderer.fill(reinterpret_cast<uint8_t*>(ram.data()), ram.size()*4, invalid, error), "Misaligned framebuffer accepted");
+        vi.status = 0;
+        require(renderer.scanout(reinterpret_cast<uint8_t*>(ram.data()), ram.size()*4, vi,pixels,w,h,error) && pixels.empty(), "VI blanking failed");
+        if (argc == 3) {
+            std::ifstream input(argv[2], std::ios::binary);
+            require(bool(input), "Cannot open replay trace");
+            decoder.reset(); uint32_t word;
+            while (input.read(reinterpret_cast<char*>(&word), 4)) { word = __builtin_bswap32(word); decoder.push(std::span(&word,1)); }
+            require(input.eof() && input.gcount() == 0, "Truncated replay word");
+            require(!decoder.hasPendingWords(), "Incomplete replay command");
+            std::printf("Replay: %llu commands, %llu unsupported\n", decoder.commands, decoder.unsupported);
+        }
+        std::puts("PASS: fragmented RDP decoding, RGBA16/32 fills (48 randomized cases), VI conversion/blanking, invalid inputs");
+    } catch (const std::exception& e) { std::fprintf(stderr,"FAIL: %s\n",e.what()); return 1; }
+}

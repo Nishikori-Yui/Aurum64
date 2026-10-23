@@ -1,0 +1,117 @@
+# Aurum64
+
+A macOS-only Nintendo 64 emulator project for Apple Silicon. The current
+milestone integrates Mupen64Plus, a low-level CXD4 RSP, a native SwiftUI/AppKit
+shell, Core Audio, GameController and an independent Metal compute renderer.
+
+**This is an early emulator implementation, not a game-compatible release.**
+The renderer implements fill-cycle RGBA16/RGBA32 rectangles and basic VI scanout.
+Triangles, TMEM/textures, combiner, blender, depth, coverage and accurate VI
+filters are not implemented. The CPU uses the cached interpreter, not a JIT.
+There is no claim of real-time performance or commercial-game compatibility.
+
+## Build and run
+
+Requirements: Apple Silicon, macOS 26+, Xcode with Swift 6 and the Metal
+toolchain, Homebrew build dependencies. The initial local build uses macOS 26
+as its deployment target because the installed Homebrew libraries require it.
+Older macOS deployment requires rebuilding those dependencies, not editing the
+app's Info.plist. No iOS, Intel Mac or non-macOS targets are provided.
+
+```sh
+brew install cmake ninja pkg-config sdl2 libpng
+# If Metal is not installed with Xcode:
+xcodebuild -downloadComponent MetalToolchain
+
+scripts/bootstrap.sh
+scripts/build.sh
+python3 scripts/test.py
+open dist/Aurum64.app
+```
+
+The final `.app` embeds the core, plugins, Metal library, SDL dependencies,
+libpng and license notices. Users do not need Homebrew or a separately installed
+emulator core to run it. It is ad-hoc signed for development, not notarized.
+
+Open an authorized, uncompressed `.z64`, `.v64` or `.n64` file. The native menu
+offers pause/resume, stop, reset and standard macOS window/fullscreen controls.
+Settings include display filtering, audio mute, input mapping help and a HUD.
+Presentation smoothing is **not** higher-resolution emulation.
+
+Configuration and core cartridge saves use
+`~/Library/Application Support/Aurum64`. Keyboard/controller input currently
+supports one player. Save states are deliberately disabled until renderer-state
+serialization is integrated; cartridge SRAM/EEPROM/mempak support comes from the
+core but game-driven persistence still needs validation.
+
+## What the tests actually prove
+
+- C++ RDP decoder: partial commands, triangle/rectangle command lengths,
+  unsupported-command counters, fill/scissor bounds and invalid-input handling.
+- Metal: RGBA16/RGBA32 fills, 48 seeded randomized comparisons with our scalar
+  byte-address reference, VI color conversion/blanking and offscreen presentation.
+- Original generated ROM: CPU boot without proprietary IPL3, RDP DMA, Metal
+  rendering, a small scalar RSP program, silent AI DMA and exact full-frame pixels.
+- Lifecycle: invalid ROM recovery, all three ROM byte orders, 4 MiB RDRAM, repeated sessions,
+  input mailbox, pause/resume/reset, stop while paused and stop without VI.
+- Bundle relocation: smoke test outside the repository, actual dyld-load audit,
+  recursive signature verification and RDP command capture/replay.
+
+This does **not** establish hardware-accurate RDP output, real game compatibility,
+vector RSP correctness, audible audio quality, physical controller operation,
+or a completed UI accessibility/fullscreen review. See [validation](docs/VALIDATION.md).
+
+## Repository layout
+
+| Path | Responsibility |
+| --- | --- |
+| `Sources/AurumApp` | Swift 6 native UI, MetalKit display, GameController/keyboard |
+| `Sources/AurumRuntime` | C ABI, emulation worker, command mailbox, frame snapshots |
+| `Sources/Plugins` | Mupen video/audio/input adapters |
+| `Sources/AurumRDP` | Independent MIT RDP decoder, Metal compute and presentation |
+| `third_party` | Pinned upstream submodules |
+| `patches` | Reproducible upstream extensions applied only to generated copies |
+| `Tests` | Host, GPU, generated-ROM and lifecycle checks |
+| `scripts` | Dependency initialization, build, packaging and validation |
+
+Build outputs and all ROM extensions are ignored. Do not add game ROMs, BIOS,
+Nintendo IPL3 code, textures, screenshots from copyrighted games or keys.
+
+## Debugging
+
+```sh
+# Build a ROM entirely from our own source:
+python3 scripts/make_test_rom.py .build/tests/fill.z64
+
+# Capture network-order RDP words (no implicit capture by default):
+AURUM_RDP_TRACE="$PWD/.build/test.rdp" \
+  .build/native/aurum-smoke .build/tests/fill.z64 \
+  dist/Aurum64.app/Contents/Frameworks dist/Aurum64.app/Contents/Resources \
+  .build/test-user
+
+.build/native/aurum-rdp-tests .build/native/AurumRDP.metallib .build/test.rdp
+```
+
+Set `AURUM_VERBOSE=1` for upstream diagnostics. Traces currently contain commands
+only, not RDRAM/TMEM/VI snapshots, so they replay self-contained fill streams,
+not arbitrary games. Tests have external timeouts; a malformed non-yielding RSP
+program can still hang its upstream interpreter.
+
+## Next milestones
+
+1. Versioned captures with memory/VI snapshots and an independently licensed
+   software-reference harness; characterize RDP/VI edge cases before extending.
+2. TMEM uploads and sampling, triangle setup/rasterization, combiner/blender,
+   depth/coverage and VI reconstruction, with differential tests at each step.
+3. Persist renderer state with core saves; validate cartridge persistence,
+   controller hotplug, audio timing, accessibility and native app lifecycle.
+4. ARM64 dynarec with macOS JIT constraints, tile scheduling, resource ownership
+   and asynchronous frame delivery after the accuracy baseline is established.
+5. Source-pinned build dependencies, Developer ID signing/notarization, source
+   release archive and compatibility/performance evidence before a public release.
+
+## Licensing
+
+Application and core adapters: GPL-2.0-or-later. Independent renderer and original
+ROM generator: MIT. Upstream code retains its own licenses. See
+[dependency provenance](docs/DEPENDENCIES.md) and [architecture](docs/ARCHITECTURE.md).
