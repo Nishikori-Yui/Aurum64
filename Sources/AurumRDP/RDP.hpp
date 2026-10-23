@@ -21,6 +21,12 @@ public:
     uint64_t commands = 0, unsupported = 0;
     uint64_t opcodeCount(uint8_t opcode) const;
     uint64_t firstCommand(uint8_t opcode) const;
+    uint64_t firstSubmission(uint8_t opcode) const;
+    uint64_t firstVI(uint8_t opcode) const;
+    uint64_t submissionCount() const { return submissions; }
+    uint64_t viCount() const { return viEvents; }
+    void beginSubmission();
+    void beginVI();
     void push(std::span<const uint32_t> words);
     void reset();
     static size_t wordCount(uint8_t opcode);
@@ -30,6 +36,9 @@ private:
     std::vector<uint32_t> pending;
     std::array<uint64_t, 64> opcodeCounts{};
     std::array<uint64_t, 64> firstCommands{};
+    std::array<uint64_t, 64> firstSubmissions{};
+    std::array<uint64_t, 64> firstVIs{};
+    uint64_t submissions = 0, viEvents = 0, currentVI = 0;
     uint32_t address = 0, width = 0, size = 0, format = 0, color = 0, cycle = 0;
     uint32_t sx0 = 0, sy0 = 0, sx1 = 0, sy1 = 0;
 };

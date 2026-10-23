@@ -21,6 +21,7 @@ int main(int argc, char** argv) {
             require(renderer.fill(reinterpret_cast<uint8_t*>(ram.data()), ram.size()*4, fill, error), error.c_str());
         };
         decoder.sync = [&] { ++syncs; };
+        decoder.beginSubmission();
         const uint32_t commands[] = {
             0xff100007, 0x1000, // RGBA16, stride 8
             0xed000000, (32 << 12) | 32,
@@ -35,6 +36,8 @@ int main(int argc, char** argv) {
                 "Opcode first-seen statistics");
         require(decoder.opcodeCount(0x36) == 1 && decoder.firstCommand(0x36) == 4,
                 "Fill opcode statistics");
+        require(decoder.submissionCount() == 1 && decoder.firstSubmission(0x3f) == 1 &&
+                decoder.firstVI(0x3f) == 1, "Submission and VI statistics");
         require(decoder.opcodeCount(0x00) == 0 && decoder.firstCommand(0x00) == UINT64_MAX,
                 "Absent opcode statistics");
         require(decoder.unsupported == 0, "Supported fill stream marked unsupported");

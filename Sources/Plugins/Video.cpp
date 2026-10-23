@@ -14,6 +14,16 @@ std::vector<uint32_t> pixels;
 uint32_t width = 0, height = 0;
 void (*renderCallback)(int) = nullptr;
 std::ofstream trace;
+void publishDiagnostics() {
+    uint64_t counts[64], submissions[64], vis[64];
+    for (unsigned opcode = 0; opcode < 64; ++opcode) {
+        counts[opcode] = decoder.opcodeCount(opcode);
+        submissions[opcode] = decoder.firstSubmission(opcode);
+        vis[opcode] = decoder.firstVI(opcode);
+    }
+    aur_publish_rdp_diagnostics(counts, submissions, vis,
+                                decoder.submissionCount(), decoder.viCount());
+}
 size_t memorySize() { return info.RDRAM_SIZE ? *info.RDRAM_SIZE : 8 * 1024 * 1024; }
 }
 extern "C" {
@@ -24,6 +34,7 @@ EXPORT int CALL RomOpen() {
     std::string error;
     if (!renderer->initialize(aur_shader_path(), error)) { aur_fail(error.c_str()); return 0; }
     decoder.reset(); width = height = 0; pixels.clear();
+    publishDiagnostics();
     decoder.fill = [](const aurum::rdp::Fill& fill) {
         std::string error;
         if (!renderer->fill(info.RDRAM, memorySize(), fill, error)) aur_fail(error.c_str());
@@ -39,6 +50,7 @@ EXPORT void CALL ProcessRDPList() {
     const uint32_t end = *info.DPC_END_REG & 0x00fffff8;
     const bool xbus = *info.DPC_STATUS_REG & 1;
     if (end < current || end - current > memorySize()) { aur_fail("Invalid RDP command range."); return; }
+    decoder.beginSubmission();
     for (; current < end; current += 8) {
         uint32_t words[2];
         for (unsigned i = 0; i < 2; ++i) {
@@ -54,14 +66,17 @@ EXPORT void CALL ProcessRDPList() {
         decoder.push(words);
     }
     *info.DPC_CURRENT_REG = end;
+    publishDiagnostics();
 }
 EXPORT void CALL UpdateScreen() {
     if (renderer) {
+        decoder.beginVI();
         std::string error;
         aurum::rdp::VideoInterface vi{*info.VI_STATUS_REG, *info.VI_ORIGIN_REG, *info.VI_WIDTH_REG,
             *info.VI_H_START_REG, *info.VI_V_START_REG, *info.VI_X_SCALE_REG, *info.VI_Y_SCALE_REG};
         if (!renderer->scanout(info.RDRAM, memorySize(), vi, pixels, width, height, error)) aur_fail(error.c_str());
         aur_publish_frame(pixels.data(), width, height, decoder.commands, decoder.unsupported);
+        publishDiagnostics();
         if (renderCallback) renderCallback(1);
     }
     aur_video_tick();

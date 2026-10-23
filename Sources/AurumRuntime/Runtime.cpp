@@ -4,6 +4,7 @@
 #include "m64p_config.h"
 #include "m64p_frontend.h"
 #include <atomic>
+#include <array>
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
@@ -32,6 +33,10 @@ std::string shaderPath;
 ptr_CoreDoCommand coreCommand = nullptr;
 void (*resetVideo)() = nullptr;
 uint64_t limit = 0;
+std::array<uint64_t, 64> opcodeCounts{};
+std::array<uint64_t, 64> firstOpcodeSubmission{};
+std::array<uint64_t, 64> firstOpcodeVI{};
+uint64_t rdpSubmissions = 0, viEvents = 0;
 bool failed = false;
 std::atomic<bool> pendingCommands{false};
 void serviceCommands();
@@ -154,6 +159,10 @@ int aur_start(const char* rom, const char* frameworks, const char* resources, co
         std::lock_guard lock(mutex);
         snapshot = {}; snapshot.state = AUR_STARTING; frame.clear(); commands.clear();
         failed = false; pendingCommands = false; limit = frameLimit; buttons = 0; rdramSize = 0;
+        opcodeCounts.fill(0);
+        firstOpcodeSubmission.fill(UINT64_MAX);
+        firstOpcodeVI.fill(UINT64_MAX);
+        rdpSubmissions = viEvents = 0;
         shaderPath = std::string(resources) + "/AurumRDP.metallib";
     }
     // Swift's temporary C strings expire when aur_start returns. Construct owned
@@ -181,6 +190,11 @@ int aur_diagnostics(AurDiagnostics* out, size_t size) {
     result.rdpCommands = snapshot.rdpCommands;
     result.unsupportedCommands = snapshot.unsupportedCommands;
     result.audioFrames = snapshot.audioFrames;
+    result.rdpSubmissions = rdpSubmissions;
+    result.viEvents = viEvents;
+    std::memcpy(result.opcodeCounts, opcodeCounts.data(), sizeof(result.opcodeCounts));
+    std::memcpy(result.firstOpcodeSubmission, firstOpcodeSubmission.data(), sizeof(result.firstOpcodeSubmission));
+    std::memcpy(result.firstOpcodeVI, firstOpcodeVI.data(), sizeof(result.firstOpcodeVI));
     std::memcpy(out, &result, sizeof(result));
     return 1;
 }
@@ -204,6 +218,16 @@ void aur_publish_frame(const uint32_t* pixels, uint32_t width, uint32_t height, 
     if (pixels && width && height) frame.assign(pixels, pixels + width * height); else frame.clear();
     snapshot.width = width; snapshot.height = height;
     snapshot.rdpCommands = count; snapshot.unsupportedCommands = unsupported;
+}
+void aur_publish_rdp_diagnostics(const uint64_t* counts, const uint64_t* submissions,
+                                 const uint64_t* firstVI, uint64_t submissionCount, uint64_t viCount) {
+    if (!counts || !submissions || !firstVI) return;
+    std::lock_guard lock(mutex);
+    std::memcpy(opcodeCounts.data(), counts, sizeof(opcodeCounts));
+    std::memcpy(firstOpcodeSubmission.data(), submissions, sizeof(firstOpcodeSubmission));
+    std::memcpy(firstOpcodeVI.data(), firstVI, sizeof(firstOpcodeVI));
+    rdpSubmissions = submissionCount;
+    viEvents = viCount;
 }
 void aur_video_tick() {
     {

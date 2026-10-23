@@ -14,6 +14,9 @@ void Decoder::reset() {
     pending.clear(); commands = unsupported = 0;
     opcodeCounts.fill(0);
     firstCommands.fill(std::numeric_limits<uint64_t>::max());
+    firstSubmissions.fill(std::numeric_limits<uint64_t>::max());
+    firstVIs.fill(std::numeric_limits<uint64_t>::max());
+    submissions = 0; viEvents = 0; currentVI = 1;
     address = width = size = format = color = cycle = 0;
     sx0 = sy0 = sx1 = sy1 = 0;
 }
@@ -23,6 +26,14 @@ uint64_t Decoder::opcodeCount(uint8_t opcode) const {
 uint64_t Decoder::firstCommand(uint8_t opcode) const {
     return opcode < firstCommands.size() ? firstCommands[opcode] : std::numeric_limits<uint64_t>::max();
 }
+uint64_t Decoder::firstSubmission(uint8_t opcode) const {
+    return opcode < firstSubmissions.size() ? firstSubmissions[opcode] : std::numeric_limits<uint64_t>::max();
+}
+uint64_t Decoder::firstVI(uint8_t opcode) const {
+    return opcode < firstVIs.size() ? firstVIs[opcode] : std::numeric_limits<uint64_t>::max();
+}
+void Decoder::beginSubmission() { ++submissions; }
+void Decoder::beginVI() { ++viEvents; currentVI = viEvents + 1; }
 void Decoder::push(std::span<const uint32_t> words) {
     pending.insert(pending.end(), words.begin(), words.end());
     size_t used = 0;
@@ -37,6 +48,8 @@ void Decoder::push(std::span<const uint32_t> words) {
 void Decoder::execute(std::span<const uint32_t> w) {
     const uint8_t opcode = (w[0] >> 24) & 63;
     if (firstCommands[opcode] == std::numeric_limits<uint64_t>::max()) firstCommands[opcode] = commands;
+    if (firstSubmissions[opcode] == std::numeric_limits<uint64_t>::max()) firstSubmissions[opcode] = submissions;
+    if (firstVIs[opcode] == std::numeric_limits<uint64_t>::max()) firstVIs[opcode] = currentVI;
     ++opcodeCounts[opcode];
     ++commands;
     const uint32_t a = w[0], b = w[1];

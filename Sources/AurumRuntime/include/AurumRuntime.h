@@ -13,13 +13,17 @@ typedef struct {
     uint64_t frames, rdpCommands, unsupportedCommands, audioFrames;
     char message[512];
 } AurSnapshot;
-enum { AUR_DIAGNOSTICS_VERSION = 1 };
+enum { AUR_DIAGNOSTICS_VERSION = 2 };
 typedef struct {
     uint32_t size;
     uint32_t version;
     int32_t state;
     uint32_t width, height;
     uint64_t frames, rdpCommands, unsupportedCommands, audioFrames;
+    uint64_t rdpSubmissions, viEvents;
+    uint64_t opcodeCounts[64];
+    uint64_t firstOpcodeSubmission[64];
+    uint64_t firstOpcodeVI[64];
 } AurDiagnostics;
 // Singleton core. Worker owns all upstream calls; UI uses a command mailbox.
 // All paths are copied before returning; callers need not retain their buffers.
@@ -40,6 +44,10 @@ int aur_wait(void);
 // Plugin-to-host interface; called only from the emulation worker.
 void aur_publish_frame(const uint32_t* pixels, uint32_t width, uint32_t height,
                        uint64_t commands, uint64_t unsupported);
+void aur_publish_rdp_diagnostics(const uint64_t* opcodeCounts,
+                                 const uint64_t* firstOpcodeSubmission,
+                                 const uint64_t* firstOpcodeVI,
+                                 uint64_t submissions, uint64_t viEvents);
 void aur_video_tick(void);
 void aur_audio_frames(uint32_t frames);
 void aur_set_rdram_size(uint32_t bytes);

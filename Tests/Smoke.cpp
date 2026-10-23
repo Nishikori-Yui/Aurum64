@@ -26,6 +26,11 @@ int main(int argc, char** argv) {
         diagnostics.rdpCommands != state.rdpCommands ||
         diagnostics.unsupportedCommands != state.unsupportedCommands ||
         diagnostics.audioFrames != state.audioFrames ||
+        diagnostics.rdpSubmissions != 1 ||
+        diagnostics.viEvents != 8 ||
+        diagnostics.opcodeCounts[0x3f] != 1 ||
+        diagnostics.firstOpcodeSubmission[0x3f] != 1 ||
+        diagnostics.firstOpcodeVI[0x3f] != 1 ||
         aur_diagnostics(&diagnostics, sizeof(diagnostics) - 1)) {
         std::fprintf(stderr, "Versioned diagnostics ABI mismatch\n");
         return 1;
