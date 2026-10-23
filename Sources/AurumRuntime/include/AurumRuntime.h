@@ -13,7 +13,7 @@ typedef struct {
     uint64_t frames, rdpCommands, unsupportedCommands, audioFrames;
     char message[512];
 } AurSnapshot;
-enum { AUR_DIAGNOSTICS_VERSION = 3 };
+enum { AUR_DIAGNOSTICS_VERSION = 4 };
 typedef struct {
     uint32_t size;
     uint32_t version;
@@ -22,6 +22,10 @@ typedef struct {
     uint64_t frames, rdpCommands, unsupportedCommands, audioFrames;
     uint64_t rdpSubmissions, viEvents;
     uint64_t recentRdpCommands, recentUnsupportedCommands;
+    uint32_t firstUnsupportedValid, firstUnsupportedOpcode;
+    uint32_t firstUnsupportedWordCount, firstUnsupportedCapturedWords;
+    uint64_t firstUnsupportedCommand, firstUnsupportedSubmission, firstUnsupportedVI;
+    uint32_t firstUnsupportedWords[32];
     uint64_t opcodeCounts[64];
     uint64_t firstOpcodeSubmission[64];
     uint64_t firstOpcodeVI[64];
@@ -50,6 +54,10 @@ void aur_publish_rdp_diagnostics(const uint64_t* opcodeCounts,
                                  const uint64_t* firstOpcodeVI,
                                  uint64_t submissions, uint64_t viEvents,
                                  uint64_t recentCommands, uint64_t recentUnsupported);
+void aur_publish_unsupported_context(uint32_t valid, uint32_t opcode,
+                                     uint32_t wordCount, uint32_t capturedWords,
+                                     uint64_t command, uint64_t submission, uint64_t vi,
+                                     const uint32_t* words);
 void aur_video_tick(void);
 void aur_audio_frames(uint32_t frames);
 void aur_set_rdram_size(uint32_t bytes);

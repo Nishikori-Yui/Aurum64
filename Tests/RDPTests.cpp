@@ -66,6 +66,11 @@ int main(int argc, char** argv) {
         require(decoder.unsupported == 0, "Partial triangle consumed too early");
         decoder.push(std::span(triangle + 43, 1));
         require(decoder.unsupported == 1 && Decoder::wordCount(0x24) == 4, "Unsupported opcode accounting");
+        const auto& context = decoder.firstUnsupported();
+        require(context.valid && context.opcode == 0x0f && context.wordCount == 44 &&
+                context.capturedWords == 32 && context.command == 6 &&
+                context.submission == 1 && context.vi == 2 &&
+                context.words[0] == triangle[0], "Unsupported context");
         std::mt19937 random(0x64);
         for (unsigned trial = 0; trial < 48; ++trial) {
             std::vector<uint32_t> actual(16384), expected;

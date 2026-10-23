@@ -24,6 +24,11 @@ void publishDiagnostics() {
     aur_publish_rdp_diagnostics(counts, submissions, vis,
                                 decoder.submissionCount(), decoder.viCount(),
                                 decoder.recentCommands(), decoder.recentUnsupported());
+    const auto& unsupported = decoder.firstUnsupported();
+    aur_publish_unsupported_context(unsupported.valid, unsupported.opcode,
+                                    unsupported.wordCount, unsupported.capturedWords,
+                                    unsupported.command, unsupported.submission,
+                                    unsupported.vi, unsupported.words);
 }
 size_t memorySize() { return info.RDRAM_SIZE ? *info.RDRAM_SIZE : 8 * 1024 * 1024; }
 }

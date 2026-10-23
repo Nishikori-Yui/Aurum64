@@ -19,6 +19,7 @@ void Decoder::reset() {
     submissions = 0; viEvents = 0; currentVI = 1;
     commandBaseline = unsupportedBaseline = 0;
     recentCommandCount = recentUnsupportedCount = 0;
+    unsupportedContext = {};
     address = width = size = format = color = cycle = 0;
     sx0 = sy0 = sx1 = sy1 = 0;
 }
@@ -42,6 +43,18 @@ void Decoder::beginVI() {
     unsupportedBaseline = unsupported;
     ++viEvents;
     currentVI = viEvents + 1;
+}
+void Decoder::markUnsupported(std::span<const uint32_t> words) {
+    ++unsupported;
+    if (unsupportedContext.valid) return;
+    unsupportedContext.valid = 1;
+    unsupportedContext.opcode = (words[0] >> 24) & 63;
+    unsupportedContext.wordCount = static_cast<uint32_t>(words.size());
+    unsupportedContext.capturedWords = static_cast<uint32_t>(std::min<size_t>(words.size(), 32));
+    unsupportedContext.command = commands - 1;
+    unsupportedContext.submission = submissions;
+    unsupportedContext.vi = currentVI;
+    std::copy_n(words.begin(), unsupportedContext.capturedWords, unsupportedContext.words);
 }
 void Decoder::push(std::span<const uint32_t> words) {
     pending.insert(pending.end(), words.begin(), words.end());
@@ -69,7 +82,7 @@ void Decoder::execute(std::span<const uint32_t> w) {
         sx0 = (a >> 12) & 4095; sy0 = a & 4095;
         sx1 = (b >> 12) & 4095; sy1 = b & 4095;
         // Field/interlace scissoring is not implemented.
-        if (b & 0x03000000) ++unsupported;
+        if (b & 0x03000000) markUnsupported(w);
         break;
     case 0x2f: cycle = (a >> 20) & 3; break;
     case 0x37: color = b; break;
@@ -79,7 +92,7 @@ void Decoder::execute(std::span<const uint32_t> w) {
         break;
     case 0x36: {
         if (cycle != 3 || format != 0 || (size != 2 && size != 3)) {
-            ++unsupported; break;
+            markUnsupported(w); break;
         }
         // Fill-cycle lower-right bounds are inclusive; scissor bounds are exclusive.
         const uint32_t x0 = std::max(((b >> 12) & 4095) >> 2, (sx0 + 3) >> 2);
@@ -89,7 +102,7 @@ void Decoder::execute(std::span<const uint32_t> w) {
         if (x0 < x1 && y0 < y1 && fill) fill({address, width, size, color, x0, y0, x1, y1});
         break;
     }
-    default: ++unsupported; break;
+    default: markUnsupported(w); break;
     }
 }
 }

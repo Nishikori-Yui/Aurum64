@@ -4,6 +4,7 @@
 #include "m64p_config.h"
 #include "m64p_frontend.h"
 #include <atomic>
+#include <algorithm>
 #include <array>
 #include <condition_variable>
 #include <cstdio>
@@ -38,6 +39,10 @@ std::array<uint64_t, 64> firstOpcodeSubmission{};
 std::array<uint64_t, 64> firstOpcodeVI{};
 uint64_t rdpSubmissions = 0, viEvents = 0;
 uint64_t recentRdpCommands = 0, recentUnsupportedCommands = 0;
+uint32_t firstUnsupportedValid = 0, firstUnsupportedOpcode = 0;
+uint32_t firstUnsupportedWordCount = 0, firstUnsupportedCapturedWords = 0;
+uint64_t firstUnsupportedCommand = 0, firstUnsupportedSubmission = 0, firstUnsupportedVI = 0;
+std::array<uint32_t, 32> firstUnsupportedWords{};
 bool failed = false;
 std::atomic<bool> pendingCommands{false};
 void serviceCommands();
@@ -165,6 +170,10 @@ int aur_start(const char* rom, const char* frameworks, const char* resources, co
         firstOpcodeVI.fill(UINT64_MAX);
         rdpSubmissions = viEvents = 0;
         recentRdpCommands = recentUnsupportedCommands = 0;
+        firstUnsupportedValid = firstUnsupportedOpcode = 0;
+        firstUnsupportedWordCount = firstUnsupportedCapturedWords = 0;
+        firstUnsupportedCommand = firstUnsupportedSubmission = firstUnsupportedVI = 0;
+        firstUnsupportedWords.fill(0);
         shaderPath = std::string(resources) + "/AurumRDP.metallib";
     }
     // Swift's temporary C strings expire when aur_start returns. Construct owned
@@ -196,6 +205,15 @@ int aur_diagnostics(AurDiagnostics* out, size_t size) {
     result.viEvents = viEvents;
     result.recentRdpCommands = recentRdpCommands;
     result.recentUnsupportedCommands = recentUnsupportedCommands;
+    result.firstUnsupportedValid = firstUnsupportedValid;
+    result.firstUnsupportedOpcode = firstUnsupportedOpcode;
+    result.firstUnsupportedWordCount = firstUnsupportedWordCount;
+    result.firstUnsupportedCapturedWords = firstUnsupportedCapturedWords;
+    result.firstUnsupportedCommand = firstUnsupportedCommand;
+    result.firstUnsupportedSubmission = firstUnsupportedSubmission;
+    result.firstUnsupportedVI = firstUnsupportedVI;
+    std::memcpy(result.firstUnsupportedWords, firstUnsupportedWords.data(),
+                sizeof(result.firstUnsupportedWords));
     std::memcpy(result.opcodeCounts, opcodeCounts.data(), sizeof(result.opcodeCounts));
     std::memcpy(result.firstOpcodeSubmission, firstOpcodeSubmission.data(), sizeof(result.firstOpcodeSubmission));
     std::memcpy(result.firstOpcodeVI, firstOpcodeVI.data(), sizeof(result.firstOpcodeVI));
@@ -235,6 +253,23 @@ void aur_publish_rdp_diagnostics(const uint64_t* counts, const uint64_t* submiss
     viEvents = viCount;
     recentRdpCommands = recentCommands;
     recentUnsupportedCommands = recentUnsupported;
+}
+void aur_publish_unsupported_context(uint32_t valid, uint32_t opcode,
+                                     uint32_t wordCount, uint32_t capturedWords,
+                                     uint64_t command, uint64_t submission, uint64_t vi,
+                                     const uint32_t* words) {
+    std::lock_guard lock(mutex);
+    if (firstUnsupportedValid || !valid || !words) return;
+    firstUnsupportedValid = 1;
+    firstUnsupportedOpcode = opcode;
+    firstUnsupportedWordCount = wordCount;
+    firstUnsupportedCapturedWords = std::min<uint32_t>(
+        capturedWords, static_cast<uint32_t>(firstUnsupportedWords.size()));
+    firstUnsupportedCommand = command;
+    firstUnsupportedSubmission = submission;
+    firstUnsupportedVI = vi;
+    std::memcpy(firstUnsupportedWords.data(), words,
+                firstUnsupportedCapturedWords * sizeof(uint32_t));
 }
 void aur_video_tick() {
     {

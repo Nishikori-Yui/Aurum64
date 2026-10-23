@@ -33,6 +33,7 @@ int main(int argc, char** argv) {
         diagnostics.opcodeCounts[0x3f] != 1 ||
         diagnostics.firstOpcodeSubmission[0x3f] != 1 ||
         diagnostics.firstOpcodeVI[0x3f] != 1 ||
+        diagnostics.firstUnsupportedValid != 0 ||
         aur_diagnostics(&diagnostics, sizeof(diagnostics) - 1)) {
         std::fprintf(stderr, "Versioned diagnostics ABI mismatch\n");
         return 1;
