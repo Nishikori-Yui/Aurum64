@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 #include <cstdint>
+#include <array>
 #include <functional>
 #include <span>
 #include <vector>
@@ -14,9 +15,12 @@ struct Fill {
 // Commands use host-order 32-bit words, as in Mupen's word-swapped RDRAM.
 class Decoder {
 public:
+    Decoder() { reset(); }
     std::function<void(const Fill&)> fill;
     std::function<void()> sync;
     uint64_t commands = 0, unsupported = 0;
+    uint64_t opcodeCount(uint8_t opcode) const;
+    uint64_t firstCommand(uint8_t opcode) const;
     void push(std::span<const uint32_t> words);
     void reset();
     static size_t wordCount(uint8_t opcode);
@@ -24,6 +28,8 @@ public:
 private:
     void execute(std::span<const uint32_t> words);
     std::vector<uint32_t> pending;
+    std::array<uint64_t, 64> opcodeCounts{};
+    std::array<uint64_t, 64> firstCommands{};
     uint32_t address = 0, width = 0, size = 0, format = 0, color = 0, cycle = 0;
     uint32_t sx0 = 0, sy0 = 0, sx1 = 0, sy1 = 0;
 };

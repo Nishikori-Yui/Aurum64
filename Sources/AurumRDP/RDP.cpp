@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "RDP.hpp"
 #include <algorithm>
+#include <limits>
 
 namespace aurum::rdp {
 size_t Decoder::wordCount(uint8_t op) {
@@ -11,8 +12,16 @@ size_t Decoder::wordCount(uint8_t op) {
 }
 void Decoder::reset() {
     pending.clear(); commands = unsupported = 0;
+    opcodeCounts.fill(0);
+    firstCommands.fill(std::numeric_limits<uint64_t>::max());
     address = width = size = format = color = cycle = 0;
     sx0 = sy0 = sx1 = sy1 = 0;
+}
+uint64_t Decoder::opcodeCount(uint8_t opcode) const {
+    return opcode < opcodeCounts.size() ? opcodeCounts[opcode] : 0;
+}
+uint64_t Decoder::firstCommand(uint8_t opcode) const {
+    return opcode < firstCommands.size() ? firstCommands[opcode] : std::numeric_limits<uint64_t>::max();
 }
 void Decoder::push(std::span<const uint32_t> words) {
     pending.insert(pending.end(), words.begin(), words.end());
@@ -26,9 +35,12 @@ void Decoder::push(std::span<const uint32_t> words) {
     pending.erase(pending.begin(), pending.begin() + used);
 }
 void Decoder::execute(std::span<const uint32_t> w) {
+    const uint8_t opcode = (w[0] >> 24) & 63;
+    if (firstCommands[opcode] == std::numeric_limits<uint64_t>::max()) firstCommands[opcode] = commands;
+    ++opcodeCounts[opcode];
     ++commands;
     const uint32_t a = w[0], b = w[1];
-    switch ((a >> 24) & 63) {
+    switch (opcode) {
     case 0x00: case 0x26: case 0x27: case 0x28: break;
     case 0x29: if (sync) sync(); break;
     case 0x2d:

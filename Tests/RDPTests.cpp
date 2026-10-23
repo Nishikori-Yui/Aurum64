@@ -31,6 +31,12 @@ int main(int argc, char** argv) {
         // Split every word to exercise partial 64-bit commands across DMA submissions.
         for (auto& word : commands) decoder.push(std::span(&word, 1));
         require(fills == 1 && syncs == 1 && decoder.commands == 6, "Decoder counters");
+        require(decoder.opcodeCount(0x3f) == 1 && decoder.firstCommand(0x3f) == 0,
+                "Opcode first-seen statistics");
+        require(decoder.opcodeCount(0x36) == 1 && decoder.firstCommand(0x36) == 4,
+                "Fill opcode statistics");
+        require(decoder.opcodeCount(0x00) == 0 && decoder.firstCommand(0x00) == UINT64_MAX,
+                "Absent opcode statistics");
         require(decoder.unsupported == 0, "Supported fill stream marked unsupported");
         for (unsigned y = 0; y < 8; ++y) for (unsigned x = 0; x < 8; ++x) {
             uint32_t word = ram[(0x1000 + (y*8+x)*2)/4];
