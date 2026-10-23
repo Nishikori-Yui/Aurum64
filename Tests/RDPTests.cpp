@@ -1,13 +1,18 @@
 // SPDX-License-Identifier: MIT
 #include "Renderer.hpp"
+#include "Capture.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <stdexcept>
 #include <string>
 #include <random>
+#include <sstream>
 
 static void require(bool value, const char* message) { if (!value) throw std::runtime_error(message); }
+static void requireCapture(bool value, const std::string& error) {
+    if (!value) throw std::runtime_error(error);
+}
 int main(int argc, char** argv) {
     try {
         require(argc >= 2, "Usage: aurum-rdp-tests metallib [network-order.rdp]");
@@ -44,6 +49,47 @@ int main(int argc, char** argv) {
         require(decoder.opcodeCount(0x00) == 0 && decoder.firstCommand(0x00) == UINT64_MAX,
                 "Absent opcode statistics");
         require(decoder.unsupported == 0, "Supported fill stream marked unsupported");
+        using aurum::capture::Record;
+        const std::vector<Record> records{{1, 7, {1, 2, 3, 4}}, {2, 8, {0, 255, 17}}};
+        std::ostringstream serialized;
+        std::string captureError;
+        requireCapture(aurum::capture::write(serialized, records, captureError), captureError);
+        const std::string bytes = serialized.str();
+        std::ostringstream serializedAgain;
+        requireCapture(aurum::capture::write(serializedAgain, records, captureError), captureError);
+        require(serializedAgain.str() == bytes, "Capture serialization is not deterministic");
+        for (unsigned repeat = 0; repeat < 20; ++repeat) {
+            std::istringstream input(bytes);
+            std::vector<Record> decoded;
+            requireCapture(aurum::capture::read(input, decoded, captureError), captureError);
+            require(decoded == records, "Capture replay changed record data");
+        }
+        std::string truncated = bytes.substr(0, bytes.size() - 1);
+        std::vector<Record> decoded;
+        std::istringstream truncatedInput(truncated);
+        require(!aurum::capture::read(truncatedInput, decoded, captureError),
+                "Truncated capture accepted");
+        std::string badVersion = bytes;
+        badVersion[8] = 2;
+        std::istringstream badVersionInput(badVersion);
+        require(!aurum::capture::read(badVersionInput, decoded, captureError),
+                "Unknown capture version accepted");
+        std::string badChecksum = bytes;
+        badChecksum[48] ^= 0x80;
+        std::istringstream badChecksumInput(badChecksum);
+        require(!aurum::capture::read(badChecksumInput, decoded, captureError),
+                "Bad capture checksum accepted");
+        std::string oversized = bytes;
+        oversized[36] = static_cast<char>((aurum::capture::kMaxChunkBytes + 1) & 255);
+        oversized[37] = static_cast<char>((aurum::capture::kMaxChunkBytes + 1) >> 8);
+        oversized[38] = static_cast<char>((aurum::capture::kMaxChunkBytes + 1) >> 16);
+        oversized[39] = static_cast<char>((aurum::capture::kMaxChunkBytes + 1) >> 24);
+        std::istringstream oversizedInput(oversized);
+        require(!aurum::capture::read(oversizedInput, decoded, captureError),
+                "Oversized capture chunk accepted");
+        std::istringstream limitedInput(bytes);
+        require(!aurum::capture::read(limitedInput, decoded, captureError, 32),
+                "Reader size limit ignored");
         for (unsigned y = 0; y < 8; ++y) for (unsigned x = 0; x < 8; ++x) {
             uint32_t word = ram[(0x1000 + (y*8+x)*2)/4];
             unsigned value = (word >> ((x & 1) ? 0 : 16)) & 65535;
