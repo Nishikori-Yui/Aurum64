@@ -144,7 +144,7 @@ int main(int argc, char** argv) {
         require(!renderer.fill(reinterpret_cast<uint8_t*>(ram.data()), ram.size()*4, invalid, error), "Misaligned framebuffer accepted");
         vi.status = 0;
         require(renderer.scanout(reinterpret_cast<uint8_t*>(ram.data()), ram.size()*4, vi,pixels,w,h,error) && pixels.empty(), "VI blanking failed");
-        if (argc == 3) {
+        if (argc >= 3) {
             std::ifstream input(argv[2], std::ios::binary);
             require(bool(input), "Cannot open replay trace");
             decoder.reset(); uint32_t word;
@@ -152,6 +152,23 @@ int main(int argc, char** argv) {
             require(input.eof() && input.gcount() == 0, "Truncated replay word");
             require(!decoder.hasPendingWords(), "Incomplete replay command");
             std::printf("Replay: %llu commands, %llu unsupported\n", decoder.commands, decoder.unsupported);
+        }
+        if (argc >= 4) {
+            std::ifstream input(argv[3], std::ios::binary);
+            require(bool(input), "Cannot open aurcap capture");
+            std::vector<aurum::capture::Record> records;
+            std::string error;
+            require(aurum::capture::read(input, records, error), error.c_str());
+            require(records.size() >= 4 && records.front().type == 1 &&
+                    records.back().type == 0xffff, "Capture boundaries");
+            unsigned submissions = 0, vis = 0;
+            for (const auto& record : records) {
+                if (record.type == 3) ++submissions;
+                if (record.type == 4) ++vis;
+            }
+            require(submissions >= 1 && vis >= 1, "Capture events");
+            std::printf("Capture: %zu records, %u submissions, %u VI events\n",
+                        records.size(), submissions, vis);
         }
         std::puts("PASS: fragmented RDP decoding, RGBA16/32 fills (48 randomized cases), VI conversion/blanking, invalid inputs");
     } catch (const std::exception& e) { std::fprintf(stderr,"FAIL: %s\n",e.what()); return 1; }

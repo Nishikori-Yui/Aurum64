@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "Common.hpp"
+#include "Capture.hpp"
 #include "Renderer.hpp"
 #include <cstring>
 #include <fstream>
@@ -14,6 +15,15 @@ std::vector<uint32_t> pixels;
 uint32_t width = 0, height = 0;
 void (*renderCallback)(int) = nullptr;
 std::ofstream trace;
+std::string capturePath;
+std::vector<aurum::capture::Record> captureRecords;
+uint64_t captureSequence = 0;
+void appendLE(std::vector<uint8_t>& payload, uint32_t value) {
+    for (unsigned i = 0; i < 4; ++i) payload.push_back(uint8_t(value >> (i * 8)));
+}
+void appendBE(std::vector<uint8_t>& payload, uint32_t value) {
+    for (int i = 3; i >= 0; --i) payload.push_back(uint8_t(value >> (i * 8)));
+}
 void publishDiagnostics() {
     uint64_t counts[64], submissions[64], vis[64];
     for (unsigned opcode = 0; opcode < 64; ++opcode) {
@@ -30,6 +40,12 @@ void publishDiagnostics() {
                                     unsupported.command, unsupported.submission,
                                     unsupported.vi, unsupported.words);
 }
+void writeCapture() {
+    if (capturePath.empty()) return;
+    std::ofstream output(capturePath, std::ios::binary | std::ios::trunc);
+    std::string error;
+    if (!output || !aurum::capture::write(output, captureRecords, error)) aur_fail(error.c_str());
+}
 size_t memorySize() { return info.RDRAM_SIZE ? *info.RDRAM_SIZE : 8 * 1024 * 1024; }
 }
 extern "C" {
@@ -41,6 +57,15 @@ EXPORT int CALL RomOpen() {
     if (!renderer->initialize(aur_shader_path(), error)) { aur_fail(error.c_str()); return 0; }
     decoder.reset(); width = height = 0; pixels.clear();
     publishDiagnostics();
+    capturePath = std::getenv("AURUM_AURCAP") ? std::getenv("AURUM_AURCAP") : "";
+    captureRecords.clear(); captureSequence = 0;
+    if (!capturePath.empty()) {
+        const uint32_t size = uint32_t(memorySize());
+        std::vector<uint8_t> payload;
+        appendLE(payload, size);
+        appendLE(payload, 0);
+        captureRecords.push_back({1, captureSequence++, std::move(payload)});
+    }
     decoder.fill = [](const aurum::rdp::Fill& fill) {
         std::string error;
         if (!renderer->fill(info.RDRAM, memorySize(), fill, error)) aur_fail(error.c_str());
@@ -49,10 +74,21 @@ EXPORT int CALL RomOpen() {
     if (const char* path = std::getenv("AURUM_RDP_TRACE")) trace.open(path, std::ios::binary | std::ios::trunc);
     return 1;
 }
-EXPORT void CALL RomClosed() { if (trace.is_open()) trace.close(); trace.clear(); renderer.reset(); }
+EXPORT void CALL RomClosed() {
+    if (!capturePath.empty()) {
+        std::vector<uint8_t> payload;
+        appendLE(payload, uint32_t(decoder.commands));
+        appendLE(payload, uint32_t(decoder.unsupported));
+        captureRecords.push_back({0xffff, captureSequence++, std::move(payload)});
+        writeCapture();
+    }
+    if (trace.is_open()) trace.close();
+    trace.clear(); capturePath.clear(); captureRecords.clear(); renderer.reset();
+}
 EXPORT void CALL AurumResetVideo() { decoder.reset(); pixels.clear(); width = height = 0; }
 EXPORT void CALL ProcessRDPList() {
     uint32_t current = *info.DPC_CURRENT_REG & 0x00fffff8;
+    const uint32_t start = current;
     const uint32_t end = *info.DPC_END_REG & 0x00fffff8;
     const bool xbus = *info.DPC_STATUS_REG & 1;
     if (end < current || end - current > memorySize()) { aur_fail("Invalid RDP command range."); return; }
@@ -71,6 +107,20 @@ EXPORT void CALL ProcessRDPList() {
         }
         decoder.push(words);
     }
+    if (!capturePath.empty()) {
+        std::vector<uint8_t> payload;
+        appendLE(payload, start);
+        appendLE(payload, end);
+        appendLE(payload, *info.DPC_STATUS_REG);
+        appendLE(payload, xbus ? 1u : 0u);
+        for (uint32_t address = start; address < end; address += 4) {
+            uint32_t word;
+            if (xbus) std::memcpy(&word, info.DMEM + (address & 4095), 4);
+            else std::memcpy(&word, info.RDRAM + address, 4);
+            appendBE(payload, word);
+        }
+        captureRecords.push_back({3, captureSequence++, std::move(payload)});
+    }
     *info.DPC_CURRENT_REG = end;
     publishDiagnostics();
 }
@@ -83,6 +133,17 @@ EXPORT void CALL UpdateScreen() {
         if (!renderer->scanout(info.RDRAM, memorySize(), vi, pixels, width, height, error)) aur_fail(error.c_str());
         aur_publish_frame(pixels.data(), width, height, decoder.commands, decoder.unsupported);
         publishDiagnostics();
+        if (!capturePath.empty()) {
+            std::vector<uint8_t> payload;
+            appendLE(payload, *info.VI_STATUS_REG);
+            appendLE(payload, *info.VI_ORIGIN_REG);
+            appendLE(payload, *info.VI_WIDTH_REG);
+            appendLE(payload, *info.VI_H_START_REG);
+            appendLE(payload, *info.VI_V_START_REG);
+            appendLE(payload, *info.VI_X_SCALE_REG);
+            appendLE(payload, *info.VI_Y_SCALE_REG);
+            captureRecords.push_back({4, captureSequence++, std::move(payload)});
+        }
         if (renderCallback) renderCallback(1);
     }
     aur_video_tick();

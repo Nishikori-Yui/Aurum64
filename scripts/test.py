@@ -20,7 +20,8 @@ with tempfile.TemporaryDirectory(prefix="aurum-relocated-") as temp:
     shutil.copytree(root / "dist/Aurum64.app", relocated)
     # Move the bundle outside the repository; check actual dyld loads, not just otool.
     env = {k: v for k, v in os.environ.items() if not k.startswith("DYLD_")}
-    env.update({"DYLD_PRINT_LIBRARIES": "1", "AURUM_RDP_TRACE": str(tests / "fill.rdp")})
+    env.update({"DYLD_PRINT_LIBRARIES": "1", "AURUM_RDP_TRACE": str(tests / "fill.rdp"),
+                "AURUM_AURCAP": str(tests / "fill.aurcap")})
     output = subprocess.run([str(root / ".build/native/aurum-smoke"), str(tests / "fill.z64"),
          str(relocated / "Contents/Frameworks"), str(relocated / "Contents/Resources"), str(tests / "user")],
          timeout=30, text=True, capture_output=True, env=env)
@@ -40,7 +41,8 @@ with tempfile.TemporaryDirectory(prefix="aurum-relocated-") as temp:
     shutil.copy2(root / ".build/native/aurum-swift-startup-tests", swift_runner)
     run(["codesign", "--force", "--sign", "-", relocated])
     run([swift_runner, tests / "fill.z64", pathlib.Path(temp) / "Swift Startup Tests"])
-run([root / ".build/native/aurum-rdp-tests", root / ".build/native/AurumRDP.metallib", tests / "fill.rdp"])
+run([root / ".build/native/aurum-rdp-tests", root / ".build/native/AurumRDP.metallib",
+     tests / "fill.rdp", tests / "fill.aurcap"])
 truncated = tests / "truncated.rdp"
 truncated.write_bytes((tests / "fill.rdp").read_bytes()[:-4])
 result = subprocess.run([str(root / ".build/native/aurum-rdp-tests"), str(root / ".build/native/AurumRDP.metallib"), str(truncated)],
