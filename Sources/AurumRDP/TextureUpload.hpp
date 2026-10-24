@@ -49,6 +49,25 @@ public:
         return true;
     }
 
+    bool loadBlock(const uint8_t* rdram, size_t rdramBytes, uint32_t tile,
+                   uint32_t sl, uint32_t tl, uint32_t sh, uint32_t dxt) {
+        if (!rdram || tile >= tmemWords.size() || tiSize != 2 || !tiWidth ||
+            dxt != 0 || (sl & 3) || (tl & 3) || (sh & 3) || sh < sl)
+            return false;
+        const uint32_t x0 = sl >> 2, y0 = tl >> 2;
+        const uint32_t count = (sh - sl) / 4 + 1;
+        const uint32_t destination = tmemWords[tile];
+        if (destination + count > 1024) return false;
+        for (uint32_t i = 0; i < count; ++i) {
+            const uint32_t address = tiAddress + ((y0 * tiWidth + x0 + i) * 2);
+            uint16_t value = 0;
+            if (!aurum::memory::readHalfword(rdram, rdramBytes, address, value))
+                return false;
+            tmem.write16(destination + i, value);
+        }
+        return true;
+    }
+
     bool loadTlut(const uint8_t* rdram, size_t rdramBytes, uint32_t tile,
                   uint32_t sl, uint32_t tl, uint32_t sh, uint32_t th) {
         if (!rdram || tile >= tmemWords.size() || tiSize != 2 || !tiWidth ||

@@ -46,6 +46,20 @@ int main() {
                 uploader.store().read16(6) == 0x0506 &&
                 uploader.store().read16(7) == 0x0708,
                 "LoadTile stride bytes differ");
+        for (unsigned i = 0; i < tileSource.size(); ++i)
+            require(aurum::memory::writeHalfword(rdram.data(), rdram.size(),
+                                                  0x1210 + i * 2, tileSource[i]),
+                    "block source setup");
+        uploader.setTextureImage(0, 2, 4, 0x1210);
+        uploader.setTile(1, 12);
+        require(uploader.loadBlock(rdram.data(), rdram.size(), 1, 0, 0, 12, 0) &&
+                uploader.store().read16(12) == 0x0102 &&
+                uploader.store().read16(13) == 0x0304 &&
+                uploader.store().read16(14) == 0x0506 &&
+                uploader.store().read16(15) == 0x0708,
+                "LoadBlock contiguous bytes differ");
+        require(!uploader.loadBlock(rdram.data(), rdram.size(), 1, 0, 0, 12, 0x80),
+                "Unsupported DXT mode accepted");
         std::puts("PASS: minimal SetTextureImage/SetTile/LoadTLUT byte upload");
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: %s\n", error.what());
