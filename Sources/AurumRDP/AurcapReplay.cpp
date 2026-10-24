@@ -235,9 +235,10 @@ int main(int argc, char** argv) {
             }
         };
         decoder.textureLoad = [&](const aurum::rdp::TextureLoad& load) {
-            // Only the RGBA16 path is modeled. Anything else stays reported as
-            // unsupported instead of producing a plausible-looking TMEM.
-            if (load.tiSize != 2) return false;
+            // Only the RGBA16 and RGBA32 paths are modeled. Anything else
+            // stays reported as unsupported instead of producing a
+            // plausible-looking TMEM.
+            if (load.tiSize != 2 && load.tiSize != 3) return false;
             // TMEM accumulates across uploads, so the same store is reused.
             // A rejected upload leaves it untouched.
             aurum::texture::Uploader& uploader = output.textures;

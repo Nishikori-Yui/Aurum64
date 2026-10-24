@@ -162,6 +162,45 @@ def _texture_capture(width: int, height: int, uploads: list[list[int]]) -> bytes
     return serialize(records)
 
 
+def _texture_seed32(width: int, height: int, source: int = TEXTURE_SRC) -> list[int]:
+    """Fill the RGBA32 source so both halfwords of every texel are distinct.
+
+    RGBA32 splits a texel across the two TMEM banks, so the high and low
+    halfword must each vary with x and y for the column order in both banks
+    to be observable.
+    """
+    words = scissor(0, 0, width * 4, height * 4) + [0xef300000, 0]
+    for y in range(height):
+        for x in range(width):
+            value = ((0x1000 + y * 16 + x) << 16) | (0x8000 + y * 16 + x)
+            words += set_image(3, source, width) + [0xf7000000, value]
+            words += [0xf6000000 | (x * 4 + 3) << 12 | (y * 4 + 3),
+                      (x * 4) << 12 | (y * 4)]
+    return words + TEXTURE_SYNC
+
+
+def _texture_capture32(width: int, height: int,
+                       uploads: list[list[int]],
+                       source: int = TEXTURE_SRC) -> bytes:
+    records = [initial(8 << 20)]
+    sequence = 2
+    bases = iter(range(0x100000, 0x100000 + 0x100 * 16, 0x100))
+
+    def submit(words: list[int]) -> None:
+        nonlocal sequence
+        records.append(rdp(sequence, next(bases), words))
+        sequence += 1
+
+    submit(_texture_seed32(width, height, source))
+    submit(set_texture_image(0, 3, width, source) + uploads[0])
+    for upload in uploads[1:]:
+        submit(upload)
+
+    records.append(vi(sequence, 2, TEXTURE_FB, 64))
+    sequence += 1
+    return serialize(records)
+
+
 def texture_fixture() -> bytes:
     """RGBA16 uploads exercising the TMEM addressing rules.
 
@@ -174,6 +213,32 @@ def texture_fixture() -> bytes:
         set_tile(2, 0, 2, 2, 8) + load_block(2, 0, 0, 12, 0) + TEXTURE_SYNC,
         set_tile(3, 0, 2, 2, 0) + load_tlut(3, 0, 0, 20, 0) + TEXTURE_SYNC,
     ])
+
+
+def texture_rgba32_fixture() -> bytes:
+    """RGBA32 LoadTile, which splits each texel across both TMEM banks.
+
+    Covers a non-zero tmem base and line strides of 2 and 4. RGBA32 LoadBlock
+    is not covered because it is reported as unsupported rather than modeled.
+    """
+    return _texture_capture32(8, 8, [
+        set_tile(0, 0, 3, 2, 0) + load_tile(0, 0, 0, 7 << 2, 7 << 2) + TEXTURE_SYNC,
+        set_tile(1, 0, 3, 4, 0) + load_tile(1, 0, 0, 7 << 2, 7 << 2) + TEXTURE_SYNC,
+        set_tile(2, 0, 3, 2, 1) + load_tile(2, 0, 0, 7 << 2, 7 << 2) + TEXTURE_SYNC,
+    ])
+
+
+def texture_rgba32_offset_fixture() -> bytes:
+    """RGBA32 LoadTile from a word-aligned but not 8-byte-aligned address.
+
+    Guards the alignment policy: the uploader accepts an offset of 4 because
+    each texel is a whole word, and this fixture confirms the result still
+    matches the reference byte-for-byte. Offsets that are not word aligned are
+    rejected and are not part of the committed suite.
+    """
+    return _texture_capture32(4, 4, [
+        set_tile(0, 0, 3, 2, 0) + load_tile(0, 0, 0, 3 << 2, 3 << 2) + TEXTURE_SYNC,
+    ], source=TEXTURE_SRC + 4)
 
 
 def texture_stride_fixture() -> bytes:
@@ -213,6 +278,8 @@ def write_all(destination: pathlib.Path) -> None:
         "texture_stride.aurcap": texture_stride_fixture(),
         "texture_block.aurcap": texture_block_fixture(),
         "texture_tlut.aurcap": texture_tlut_fixture(),
+        "texture_rgba32.aurcap": texture_rgba32_fixture(),
+        "texture_rgba32_offset.aurcap": texture_rgba32_offset_fixture(),
     }
     for name, data in fixtures.items():
         (destination / name).write_bytes(data)

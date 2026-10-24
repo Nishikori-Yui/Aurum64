@@ -7,24 +7,26 @@
 #include <cstdint>
 
 namespace aurum::texture {
-// RGBA16 texture uploads into TMEM.
+// RGBA16 and RGBA32 texture uploads into TMEM.
 //
 // The hardware word indices below were derived from Angrylion's
 // get_tmem_idx() and verified byte-for-byte against TMEM exported by
 // aurum-angrylion-reference: the SetTile "tmem" and "line" fields count
 // 8-byte units, so a halfword index is (tmem + line * row) << 2; odd rows
 // additionally swap the dword pair; and every index carries the host
-// word swap.
+// word swap. RGBA32 splits each texel across the banks, keeping the high
+// halfword in bank 0 and the low halfword in bank 1 at the same word index.
 //
-// Deliberate divergence from the reference: an out-of-range source address is
-// rejected with false instead of being masked into RDRAM and read as zero the
-// way rdram_read_idx32() does. The plan requires invalid combinations to fail
-// explicitly rather than return plausible data, so uploads that would read
-// outside RDRAM are reported as unsupported.
+// Deliberate divergence from the reference: an out-of-range or misaligned
+// source address is rejected with false instead of being masked into RDRAM
+// and read as zero the way rdram_read_idx32() does. The plan requires invalid
+// combinations to fail explicitly rather than return plausible data, so such
+// uploads are reported as unsupported.
 class Uploader {
 public:
     static constexpr uint32_t kTmemUnits = 512;      // 9-bit tmem field
     static constexpr uint32_t kTmemWords16 = 2048;   // 4 KiB of halfwords
+    static constexpr uint32_t kBankWords16 = 1024;
 
     void setTextureImage(uint32_t format, uint32_t size, uint32_t width,
                          uint32_t address) {
@@ -48,40 +50,60 @@ public:
             return false;
         const uint32_t line = tileLines[tile];
         const uint32_t destination = tmemWords[tile];
+        // The hardware word index is 11 bits wide and spans both banks, so
+        // RGBA16 may reach the last of 2048 words. RGBA32 also writes the
+        // same index plus one bank, which has to stay inside that window.
         // 64-bit: a wide extent must not wrap past the TMEM window.
         const uint64_t lastRow = uint64_t(destination) + line * (rows - 1);
+        const uint64_t lastWord = (lastRow << 2) + columns;
+        const uint64_t limit = tiSize == 3 ? kBankWords16 : kTmemWords16;
         if (!line || columns > line * 4 || lastRow >= kTmemUnits ||
-            (lastRow << 2) + columns > kTmemWords16)
+            lastWord > limit)
             return false;
         if (!sourceReadsValid(columns, rows, sl >> 2, tl >> 2, rdramBytes))
             return false;
         const uint32_t x0 = sl >> 2, y0 = tl >> 2;
-        for (uint32_t row = 0; row < rows; ++row)
-            for (uint32_t column = 0; column < columns; ++column)
-                tmem.writeHwWord(tileWordIndex(destination, line, row, column),
-                                 readSource(rdram, rdramBytes, x0 + column,
-                                            y0 + row));
+        for (uint32_t row = 0; row < rows; ++row) {
+            for (uint32_t column = 0; column < columns; ++column) {
+                const uint32_t index =
+                    tileWordIndex(destination, line, row, column);
+                if (tiSize == 3) {
+                    const uint32_t value =
+                        readSourceWord(rdram, rdramBytes, x0 + column, y0 + row);
+                    tmem.writeHwWord(index, uint16_t(value >> 16));
+                    tmem.writeHwWord(index + kBankWords16,
+                                     uint16_t(value & 0xffff));
+                } else {
+                    tmem.writeHwWord(index, readSourceHalfword(
+                                                rdram, rdramBytes, x0 + column,
+                                                y0 + row));
+                }
+            }
+        }
         return true;
     }
 
     bool loadBlock(const uint8_t* rdram, size_t rdramBytes, uint32_t tile,
                    uint32_t sl, uint32_t tl, uint32_t sh, uint32_t dxt) {
+        // RGBA32 LoadBlock is deliberately not modeled: the reference writes
+        // steps * 4 - 2 texels rather than a whole number of texels per step,
+        // and that layout is not yet verified, so it is reported unsupported.
         if (!rdram || tile >= tmemWords.size() || tiSize != 2 || !tiWidth ||
             dxt != 0 || (sl & 3) || (tl & 3) || (sh & 3) || sh < sl)
             return false;
         const uint32_t x0 = sl >> 2, y0 = tl >> 2;
-        // Each edge-walker step spans four RGBA16 halfwords, so the texel
-        // count is four times the number of steps. LoadBlock writes one
-        // contiguous run with no odd-row swap.
+        // Each edge-walker step spans 64 bits, so four RGBA16 halfwords are
+        // written per step with no odd-row swap.
         const uint32_t count = ((sh - sl) / 4 + 1) * 4;
         const uint32_t destination = tmemWords[tile];
-        if (uint64_t(destination << 2) + count > kTmemWords16)
+        // Only bank 0 is verified for LoadBlock, so the run must stay there.
+        if (uint64_t(destination << 2) + count > kBankWords16)
             return false;
         if (!sourceReadsValid(count, 1, x0, y0, rdramBytes))
             return false;
         for (uint32_t i = 0; i < count; ++i)
             tmem.writeHwWord(((destination << 2) + i) ^ 1u,
-                             readSource(rdram, rdramBytes, x0 + i, y0));
+                             readSourceHalfword(rdram, rdramBytes, x0 + i, y0));
         return true;
     }
 
@@ -90,18 +112,20 @@ public:
         uint32_t columns = 0, rows = 0;
         if (!decodeRect(rdram, tile, sl, tl, sh, th, columns, rows))
             return false;
-        // A TLUT is a single row of palette entries; anything else is not a
-        // defined upload rather than something to approximate.
-        if (rows != 1) return false;
+        // A TLUT is a single row of 16-bit palette entries regardless of the
+        // texture image size; anything else is not a defined upload rather
+        // than something to approximate.
+        if (rows != 1 || tiSize != 2) return false;
         const uint32_t destination = tmemWords[tile];
         // Each entry occupies four hardware words (eight bytes).
-        if (uint64_t(destination << 2) + uint64_t(columns) * 16 > kTmemWords16)
+        if (uint64_t(destination << 2) + uint64_t(columns) * 16 > kBankWords16)
             return false;
         if (!sourceReadsValid(columns, 1, sl >> 2, tl >> 2, rdramBytes))
             return false;
         const uint32_t x0 = sl >> 2, y0 = tl >> 2;
         for (uint32_t entry = 0; entry < columns; ++entry) {
-            const uint16_t value = readSource(rdram, rdramBytes, x0 + entry, y0);
+            const uint16_t value =
+                readSourceHalfword(rdram, rdramBytes, x0 + entry, y0);
             for (uint32_t copy = 0; copy < 4; ++copy)
                 tmem.writeHwWord((destination << 2) + entry * 16 + copy, value);
         }
@@ -118,12 +142,17 @@ public:
     }
 
 private:
+    bool supportedSize() const { return tiSize == 2 || tiSize == 3; }
+
     bool decodeRect(const uint8_t* rdram, uint32_t tile, uint32_t sl,
                     uint32_t tl, uint32_t sh, uint32_t th, uint32_t& columns,
                     uint32_t& rows) const {
-        if (!rdram || tile >= tmemWords.size() || tiSize != 2 || !tiWidth ||
-            (sl & 3) || (tl & 3) || (sh & 3) || (th & 3) || sh < sl || th < tl)
+        if (!rdram || tile >= tmemWords.size() || !supportedSize() ||
+            !tiWidth || (sl & 3) || (tl & 3) || (sh & 3) || (th & 3) ||
+            sh < sl || th < tl)
             return false;
+        // RGBA32 texels are whole words, so the image must start aligned.
+        if (tiSize == 3 && (tiAddress & 3)) return false;
         columns = (sh - sl) / 4 + 1;
         rows = (th - tl) / 4 + 1;
         return true;
@@ -140,27 +169,39 @@ private:
         return true;
     }
 
-    // Guest address of an RGBA16 texel, or npos when it overflows 32 bits.
+    // Guest address of one texel, or npos when it overflows 32 bits.
     size_t sourceAddress(uint32_t x, uint32_t y) const {
-        const uint64_t address =
-            uint64_t(tiAddress) + (uint64_t(y) * tiWidth + x) * 2;
+        const uint64_t address = uint64_t(tiAddress) +
+            (uint64_t(y) * tiWidth + x) * (tiSize == 3 ? 4 : 2);
         return address > UINT32_MAX ? npos : size_t(address);
     }
 
     bool sourceFits(uint32_t x, uint32_t y, size_t rdramBytes) const {
         const size_t address = sourceAddress(x, y);
         if (address == npos) return false;
+        if (tiSize == 3) {
+            const size_t host = aurum::memory::hostWordAddress(uint32_t(address));
+            return host + sizeof(uint32_t) <= rdramBytes;
+        }
         const size_t host =
             aurum::memory::hostHalfwordAddress(uint32_t(address));
         return host + sizeof(uint16_t) <= rdramBytes;
     }
 
-    uint16_t readSource(const uint8_t* rdram, size_t rdramBytes, uint32_t x,
-                        uint32_t y) const {
+    uint16_t readSourceHalfword(const uint8_t* rdram, size_t rdramBytes,
+                                uint32_t x, uint32_t y) const {
         uint16_t value = 0;
         // Validated by sourceReadsValid before any TMEM write.
         aurum::memory::readHalfword(rdram, rdramBytes,
                                     uint32_t(sourceAddress(x, y)), value);
+        return value;
+    }
+
+    uint32_t readSourceWord(const uint8_t* rdram, size_t rdramBytes,
+                            uint32_t x, uint32_t y) const {
+        uint32_t value = 0;
+        aurum::memory::readWord(rdram, rdramBytes,
+                                uint32_t(sourceAddress(x, y)), value);
         return value;
     }
 

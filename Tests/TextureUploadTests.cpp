@@ -46,18 +46,18 @@ int main() {
                 "unaligned TLUT bounds accepted");
         require(!uploader.loadTlut(rdram.data(), rdram.size(), 2, 0, 0, 12, 4),
                 "multi-row TLUT accepted");
-        // Four entries span 64 hardware words, so a 9-bit tmem base of 511
-        // (word 2044) is the smallest start that runs past the last word.
+        // A TLUT lives entirely in bank 0, whose 1024 hardware words end at
+        // tmem unit 256. Four entries span 64 words, so unit 240 is the last
+        // base that fits and unit 241 would spill into bank 1.
+        uploader.setTile(2, 240);
+        require(uploader.loadTlut(rdram.data(), rdram.size(), 2, 0, 0, 12, 0),
+                "TLUT ending at the last bank-0 word rejected");
+        uploader.setTile(2, 241);
+        require(!uploader.loadTlut(rdram.data(), rdram.size(), 2, 0, 0, 12, 0),
+                "TLUT spilling into bank 1 accepted");
         uploader.setTile(2, 511);
         require(!uploader.loadTlut(rdram.data(), rdram.size(), 2, 0, 0, 12, 0),
                 "TLUT destination overflow accepted");
-        // 496 << 2 is word 1984; four entries of 16 words end exactly at 2048.
-        uploader.setTile(2, 496);
-        require(uploader.loadTlut(rdram.data(), rdram.size(), 2, 0, 0, 12, 0),
-                "TLUT ending at the final TMEM word rejected");
-        uploader.setTile(2, 497);
-        require(!uploader.loadTlut(rdram.data(), rdram.size(), 2, 0, 0, 12, 0),
-                "TLUT one word past the end accepted");
 
         // LoadTile: tmem and line count 8-byte units, odd rows swap the dword
         // pair, and every index carries the host word swap.
@@ -129,13 +129,13 @@ int main() {
         // field itself is only 9 bits wide.
         Uploader boundsUploader;
         boundsUploader.setTextureImage(0, 2, 4, 0x1000);
-        // With two rows, tmem=255 and line=256 the last row base is unit 511,
-        // whose words end exactly at the last of the 2048 hardware halfwords.
-        boundsUploader.setTile(3, 255, 256);
-        require(boundsUploader.loadTile(rdram.data(), rdram.size(), 3, 0, 0, 0, 4),
+        // The hardware word index is 11 bits wide, so a single row starting at
+        // the last tmem unit ends exactly at word 2048. A second row pushes
+        // the row base past the 9-bit unit field and is rejected.
+        boundsUploader.setTile(3, 511, 1);
+        require(boundsUploader.loadTile(rdram.data(), rdram.size(), 3, 0, 0, 12, 0),
                 "TMEM upload ending at the last hardware word");
-        boundsUploader.setTile(3, 255, 257);
-        require(!boundsUploader.loadTile(rdram.data(), rdram.size(), 3, 0, 0, 0, 4),
+        require(!boundsUploader.loadTile(rdram.data(), rdram.size(), 3, 0, 0, 12, 4),
                 "TMEM destination overflow accepted");
         // A single row whose columns exceed the line stride is rejected too.
         boundsUploader.setTile(3, 0, 1);
@@ -154,7 +154,58 @@ int main() {
                     sourceUploader.store().read16(word, 1) == 0,
                     "Rejected upload modified TMEM");
 
-        std::puts("PASS: RGBA16 TMEM uploads match the reference hardware layout");
+        // RGBA32 splits each texel across the banks: the high halfword goes to
+        // bank 0 and the low halfword to bank 1 at the same word index.
+        std::vector<uint8_t> source32(0x2000, 0);
+        const std::array<uint32_t, 4> words32{0x10008000, 0x10018001,
+                                              0x10028002, 0x10038003};
+        for (unsigned i = 0; i < words32.size(); ++i)
+            require(aurum::memory::writeWord(source32.data(), source32.size(),
+                                              0x1000 + i * 4, words32[i]),
+                    "RGBA32 source setup");
+        Uploader splitUploader;
+        splitUploader.setTextureImage(0, 3, 4, 0x1000);
+        splitUploader.setTile(0, 0, 1);
+        require(splitUploader.loadTile(source32.data(), source32.size(), 0, 0, 0,
+                                       12, 0),
+                "RGBA32 LoadTile upload");
+        for (unsigned i = 0; i < words32.size(); ++i) {
+            const uint32_t index = Uploader::tileWordIndex(0, 1, 0, i);
+            require(splitUploader.store().readHwWord(index) ==
+                        uint16_t(words32[i] >> 16),
+                    "RGBA32 high halfword placement differs");
+            require(splitUploader.store().readHwWord(index + 1024) ==
+                        uint16_t(words32[i] & 0xffff),
+                    "RGBA32 low halfword placement differs");
+        }
+
+        // Only the verified halves of the address space are accepted. RGBA16
+        // LoadTile may reach bank 1; RGBA32 LoadTile, LoadBlock and any
+        // LoadBlock into bank 1 are reported unsupported instead.
+        Uploader bankUploader;
+        bankUploader.setTextureImage(0, 2, 4, 0x1000);
+        bankUploader.setTile(0, 256, 2);
+        require(bankUploader.loadTile(source32.data(), source32.size(), 0, 0, 0,
+                                      12, 12),
+                "RGBA16 LoadTile into bank 1 rejected");
+        Uploader rejectUploader;
+        rejectUploader.setTextureImage(0, 3, 4, 0x1000);
+        rejectUploader.setTile(0, 256, 2);
+        require(!rejectUploader.loadTile(source32.data(), source32.size(), 0, 0,
+                                         0, 12, 12),
+                "RGBA32 LoadTile into bank 1 accepted");
+        rejectUploader.setTile(0, 0, 2);
+        require(!rejectUploader.loadBlock(source32.data(), source32.size(), 0, 0,
+                                          0, 4, 0),
+                "RGBA32 LoadBlock accepted");
+        Uploader blockBankUploader;
+        blockBankUploader.setTextureImage(0, 2, 4, 0x1000);
+        blockBankUploader.setTile(0, 256);
+        require(!blockBankUploader.loadBlock(source32.data(), source32.size(), 0,
+                                             0, 0, 4, 0),
+                "LoadBlock into bank 1 accepted");
+
+        std::puts("PASS: RGBA16 and RGBA32 TMEM uploads match the reference layout");
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: %s\n", error.what());
         return 1;
