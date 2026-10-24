@@ -1,0 +1,23 @@
+name: macOS ARM64
+on:
+  push:
+  pull_request:
+jobs:
+  build:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install build tools
+        run: brew install cmake ninja pkg-config sdl2 libpng
+      - name: Install Metal compiler
+        run: xcodebuild -downloadComponent MetalToolchain
+      - name: Build application
+        run: scripts/bootstrap.sh && scripts/build.sh
+      - name: Verify native tests and bundle
+        run: python3 scripts/test.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Aurum64-arm64-development
+          path: dist/Aurum64.app

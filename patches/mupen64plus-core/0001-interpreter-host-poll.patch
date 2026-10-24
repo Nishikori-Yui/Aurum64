@@ -1,0 +1,65 @@
+--- a/src/device/r4300/r4300_core.h
++++ b/src/device/r4300/r4300_core.h
+@@ -254,4 +254,7 @@
+ 
+ void savestates_load_set_pc(struct r4300_core* r4300, uint32_t pc);
+ 
+-#endif
++/* Aurum integration: bounded host-command service on the emulation thread. */
++void aurum_poll_execution(void);
++
++#endif
+--- a/src/device/r4300/r4300_core.c
++++ b/src/device/r4300/r4300_core.c
+@@ -40,6 +40,19 @@
+ #include <string.h>
+ #include <time.h>
+ 
++/* Aurum integration extension, configured only while the core is stopped.
++ * Upstream APIs remain unchanged; dynarec does not use this interpreter hook. */
++static void (*aurum_execution_callback)(void) = NULL;
++EXPORT void CALL AurumSetExecutionCallback(void (*callback)(void))
++{
++    aurum_execution_callback = callback;
++}
++void aurum_poll_execution(void)
++{
++    if (aurum_execution_callback != NULL)
++        aurum_execution_callback();
++}
++
+ void init_r4300(struct r4300_core* r4300, struct memory* mem, struct mi_controller* mi, struct rdram* rdram, const struct interrupt_handler* interrupt_handlers,
+     unsigned int emumode, unsigned int count_per_op, unsigned int count_per_op_denom_pot, int no_compiled_jump, int randomize_interrupt, uint32_t start_address)
+ {
+--- a/src/device/r4300/cached_interp.c
++++ b/src/device/r4300/cached_interp.c
+@@ -986,8 +986,13 @@
+ 
+ void run_cached_interpreter(struct r4300_core* r4300)
+ {
++    unsigned int aurum_poll_count = 0;
+     while (!*r4300_stop(r4300))
+     {
++        if ((aurum_poll_count++ & 4095u) == 0) {
++            aurum_poll_execution();
++            if (*r4300_stop(r4300)) break;
++        }
+ #ifdef COMPARE_CORE
+         if ((*r4300_pc_struct(r4300))->ops == cached_interp_FIN_BLOCK && ((*r4300_pc_struct(r4300))->addr < 0x80000000 || (*r4300_pc_struct(r4300))->addr >= 0xc0000000))
+             virtual_to_physical_address(r4300, (*r4300_pc_struct(r4300))->addr, 2);
+--- a/src/device/r4300/pure_interp.c
++++ b/src/device/r4300/pure_interp.c
+@@ -758,8 +758,13 @@
+    *r4300_pc_struct(r4300) = &r4300->interp_PC;
+    *r4300_pc(r4300) = r4300->cp0.last_addr = r4300->start_address;
+ 
++   unsigned int aurum_poll_count = 0;
+    while (!*r4300_stop(r4300))
+    {
++     if ((aurum_poll_count++ & 4095u) == 0) {
++       aurum_poll_execution();
++       if (*r4300_stop(r4300)) break;
++     }
+ #ifdef COMPARE_CORE
+      CoreCompareCallback();
+ #endif
