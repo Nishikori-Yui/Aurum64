@@ -20,6 +20,15 @@ struct TextureLoad {
     uint32_t sl = 0, tl = 0, sh = 0, th = 0;
     uint32_t dxt = 0;      // LoadBlock only
 };
+// A decoded TextureRectangle/TextureRectangleFlip (opcode 0x24/0x25). The
+// framebuffer, tile descriptor and tile size come from the decoder state at the
+// time of the command, so only the command's own fields are carried here.
+struct TextureRect {
+    uint32_t tile = 0;
+    uint32_t xh = 0, yh = 0, xl = 0, yl = 0;   // raw 12-bit edge fields
+    int32_t s = 0, t = 0, dsdx = 0, dtdy = 0;  // sign-extended 16-bit
+    bool flip = false;
+};
 struct UnsupportedContext {
     uint32_t valid = 0, opcode = 0, wordCount = 0, capturedWords = 0;
     uint64_t command = 0, submission = 0, vi = 0;
@@ -45,6 +54,9 @@ public:
     // Returns true when the upload was modeled. A rejected or missing handler
     // is reported as unsupported rather than silently ignored.
     std::function<bool(const TextureLoad&)> textureLoad;
+    // Returns true when the rectangle was rendered. A rejected or missing
+    // handler is reported as unsupported rather than silently ignored.
+    std::function<bool(const TextureRect&)> textureRect;
     std::function<void()> sync;
     uint64_t commands = 0, unsupported = 0;
     uint64_t opcodeCount(uint8_t opcode) const;

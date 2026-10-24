@@ -174,6 +174,45 @@ int main(int argc, char** argv) {
         decoder.push(std::span(textureCommands + 4, 2));
         require(decoder.unsupported == 2,
                 "Missing texture load handler reported as unsupported");
+
+        // TextureRectangle (0x24) and Flip (0x25) decode their four fields and
+        // sign-extend the 16-bit s/t and derivatives.
+        decoder.reset();
+        decoder.beginSubmission();
+        std::vector<TextureRect> rects;
+        decoder.textureRect = [&](const TextureRect& rect) {
+            rects.push_back(rect);
+            return true;
+        };
+        // word0 = xl<<12 | yl, word1 = tile<<24 | xh<<12 | yh,
+        // word2 = s<<16 | t, word3 = dsdx<<16 | dtdy.
+        const uint32_t rectCommands[] = {
+            0xe4000000 | (40 << 12) | 24, (1 << 24) | (12 << 12) | 8,
+            uint32_t((0xffff << 16) | 0x0010), uint32_t((0x8000 << 16) | 0x0020),
+            0xe5000000 | (40 << 12) | 24, (2 << 24) | (12 << 12) | 8,
+            uint32_t((0x0002 << 16) | 0x0003), uint32_t((0x0004 << 16) | 0x0005)};
+        decoder.push(rectCommands);
+        require(decoder.unsupported == 0 && rects.size() == 2,
+                "TextureRectangle opcodes reported");
+        require(!rects[0].flip && rects[0].tile == 1 && rects[0].xl == 40 &&
+                rects[0].yl == 24 && rects[0].xh == 12 && rects[0].yh == 8 &&
+                rects[0].s == -1 && rects[0].t == 16 &&
+                rects[0].dsdx == -32768 && rects[0].dtdy == 32,
+                "TextureRectangle decoded fields");
+        require(rects[1].flip && rects[1].tile == 2 && rects[1].s == 2 &&
+                rects[1].t == 3 && rects[1].dsdx == 4 && rects[1].dtdy == 5,
+                "TextureRectangleFlip decoded fields");
+        decoder.textureRect = [](const TextureRect&) { return false; };
+        decoder.push(std::span(rectCommands, 4));
+        require(decoder.unsupported == 1 &&
+                decoder.firstUnsupported().opcode == 0x24,
+                "Rejected TextureRectangle reported as unsupported");
+        decoder.textureRect = nullptr;
+        decoder.push(std::span(rectCommands, 4));
+        require(decoder.unsupported == 2,
+                "Missing TextureRectangle handler reported as unsupported");
+        decoder.textureLoad = nullptr;
+
         std::mt19937 random(0x64);
         for (unsigned trial = 0; trial < 48; ++trial) {
             std::vector<uint32_t> actual(16384), expected;

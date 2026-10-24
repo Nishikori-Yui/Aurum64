@@ -169,6 +169,22 @@ void Decoder::execute(std::span<const uint32_t> w) {
         if (!textureLoad || !textureLoad(load)) markUnsupported(w);
         break;
     }
+    case 0x24:
+    case 0x25: {
+        TextureRect rect;
+        rect.flip = (opcode == 0x25);
+        rect.tile = (b >> 24) & 7;
+        rect.xl = (a >> 12) & 0xfff;
+        rect.yl = a & 0xfff;
+        rect.xh = (b >> 12) & 0xfff;
+        rect.yh = b & 0xfff;
+        rect.s = int16_t((w[2] >> 16) & 0xffff);
+        rect.t = int16_t(w[2] & 0xffff);
+        rect.dsdx = int16_t((w[3] >> 16) & 0xffff);
+        rect.dtdy = int16_t(w[3] & 0xffff);
+        if (!textureRect || !textureRect(rect)) markUnsupported(w);
+        break;
+    }
     case 0x37: color = b; break;
     case 0x3d:
         tiFormat = (a >> 21) & 7; tiSize = (a >> 19) & 3;
