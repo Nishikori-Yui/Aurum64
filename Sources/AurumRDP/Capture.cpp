@@ -53,7 +53,14 @@ bool write(std::ostream& output, std::span<const Record> records, std::string& e
         error = "Cannot write capture header."; return false;
     }
     uint64_t total = header.size();
+    bool havePrevious = false;
+    uint64_t previousSequence = 0;
     for (const Record& record : records) {
+        if (havePrevious && record.sequence <= previousSequence) {
+            error = "Capture sequence is not monotonic."; return false;
+        }
+        havePrevious = true;
+        previousSequence = record.sequence;
         if (record.payload.size() > kMaxChunkBytes) { error = "Capture chunk exceeds limit."; return false; }
         if (record.payload.size() > std::numeric_limits<uint32_t>::max() ||
             total > kMaxCaptureBytes - kChunkHeaderBytes - record.payload.size()) {
@@ -87,6 +94,8 @@ bool read(std::istream& input, std::vector<Record>& records, std::string& error,
     const uint64_t declaredLimit = get64(header.data() + 20);
     if (declaredLimit == 0 || declaredLimit > maxBytes) { error = "Capture limit exceeds reader policy."; return false; }
     uint64_t total = header.size();
+    bool havePrevious = false;
+    uint64_t previousSequence = 0;
     for (;;) {
         uint8_t first = 0;
         if (!input.read(reinterpret_cast<char*>(&first), 1)) {
@@ -106,6 +115,11 @@ bool read(std::istream& input, std::vector<Record>& records, std::string& error,
         record.payload.resize(length);
         if (!readExact(input, record.payload.data(), length)) { error = "Truncated capture chunk."; return false; }
         if (checksum(record.payload) != get32(chunk.data() + 16)) { error = "Capture checksum mismatch."; return false; }
+        if (havePrevious && record.sequence <= previousSequence) {
+            error = "Capture sequence is not monotonic."; return false;
+        }
+        havePrevious = true;
+        previousSequence = record.sequence;
         records.push_back(std::move(record));
         total += kChunkHeaderBytes + length;
     }

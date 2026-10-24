@@ -94,6 +94,16 @@ int main(int argc, char** argv) {
         std::istringstream limitedInput(bytes);
         require(!aurum::capture::read(limitedInput, decoded, captureError, 32),
                 "Reader size limit ignored");
+        const std::vector<aurum::capture::Record> nonMonotonic{
+            {1, 2, {1}}, {2, 2, {2}}};
+        std::ostringstream invalidOutput;
+        require(!aurum::capture::write(invalidOutput, nonMonotonic, captureError),
+                "Non-monotonic capture sequence accepted by writer");
+        std::string badSequence = bytes;
+        badSequence[40] = static_cast<char>(records[1].sequence);
+        std::istringstream badSequenceInput(badSequence);
+        require(!aurum::capture::read(badSequenceInput, decoded, captureError),
+                "Non-monotonic capture sequence accepted by reader");
         for (unsigned y = 0; y < 8; ++y) for (unsigned x = 0; x < 8; ++x) {
             uint32_t word = ram[(0x1000 + (y*8+x)*2)/4];
             unsigned value = (word >> ((x & 1) ? 0 : 16)) & 65535;
