@@ -60,6 +60,28 @@ int main() {
                 "LoadBlock contiguous bytes differ");
         require(!uploader.loadBlock(rdram.data(), rdram.size(), 1, 0, 0, 12, 0x80),
                 "Unsupported DXT mode accepted");
+        uploader.setTextureImage(0, 2, 4, 0x1000);
+        uploader.setTile(0, 20);
+        uploader.setTile(1, 20);
+        require(uploader.loadTlut(rdram.data(), rdram.size(), 0, 0, 0, 0, 0),
+                "Aliased tile upload");
+        require(uploader.store().read16(20, 1) == source[0],
+                "Aliased tile destination mismatch");
+        require(aurum::memory::writeHalfword(rdram.data(), rdram.size(), 0x1000, 0xbeef),
+                "Repeated upload source setup");
+        require(uploader.loadTlut(rdram.data(), rdram.size(), 1, 0, 0, 0, 0) &&
+                uploader.store().read16(20, 1) == 0xbeef,
+                "Repeated upload did not overwrite alias");
+        uploader.setTile(3, 511, 128);
+        require(uploader.loadTile(rdram.data(), rdram.size(), 3, 0, 0, 0, 4),
+                "TMEM upload ending at word 1024");
+        uploader.setTile(3, 511, 129);
+        require(!uploader.loadTile(rdram.data(), rdram.size(), 3, 0, 0, 0, 4),
+                "TMEM destination overflow accepted");
+        uploader.setTile(3, 0, 1);
+        uploader.setTextureImage(0, 2, 4, 0x1ffe);
+        require(!uploader.loadTile(rdram.data(), rdram.size(), 3, 0, 0, 4, 0),
+                "RDRAM source overflow accepted");
         std::puts("PASS: minimal SetTextureImage/SetTile/LoadTLUT byte upload");
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: %s\n", error.what());
