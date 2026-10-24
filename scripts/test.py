@@ -43,6 +43,11 @@ with tempfile.TemporaryDirectory(prefix="aurum-relocated-") as temp:
     run([swift_runner, tests / "fill.z64", pathlib.Path(temp) / "Swift Startup Tests"])
 run([root / ".build/native/aurum-rdp-tests", root / ".build/native/AurumRDP.metallib",
      tests / "fill.rdp", tests / "fill.aurcap"])
+replay = subprocess.run([str(root / ".build/native/aurum-aurcap-replay"), tests / "fill.aurcap"],
+                        capture_output=True, text=True, timeout=30)
+assert replay.returncode == 0 and '"submissions":1' in replay.stdout and \
+       '"commands":6' in replay.stdout and '"unsupported":0' in replay.stdout, replay.stderr
+print(replay.stdout, end="")
 with tempfile.TemporaryDirectory(prefix="aurum-capped-") as temp:
     capped = pathlib.Path(temp) / "Aurum64.app"
     shutil.copytree(root / "dist/Aurum64.app", capped)
