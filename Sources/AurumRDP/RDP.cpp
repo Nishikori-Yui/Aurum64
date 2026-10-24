@@ -98,8 +98,8 @@ void Decoder::execute(std::span<const uint32_t> w) {
             markUnsupported(w); break;
         }
         // Fill-cycle lower-right bounds are inclusive; scissor bounds are exclusive.
-        const uint32_t x0 = std::max(((b >> 12) & 4095) >> 2, (sx0 + 3) >> 2);
-        const uint32_t y0 = std::max((b & 4095) >> 2, (sy0 + 3) >> 2);
+        const uint32_t x0 = std::max(((b >> 12) & 4095) >> 2, sx0 >> 2);
+        const uint32_t y0 = std::max((b & 4095) >> 2, sy0 >> 2);
         const uint32_t x1 = std::min({(((a >> 12) & 4095) >> 2) + 1, sx1 >> 2, width});
         const uint32_t y1 = std::min(((a & 4095) >> 2) + 1, sy1 >> 2);
         if (x0 < x1 && y0 < y1 && fill) fill({address, width, size, color, x0, y0, x1, y1});

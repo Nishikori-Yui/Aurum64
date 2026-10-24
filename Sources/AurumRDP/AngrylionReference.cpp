@@ -187,7 +187,7 @@ struct Session {
         n64video_update_screen(&frame);
         if (frame.valid) {
             std::vector<uint32_t> pixels(static_cast<size_t>(frame.width) * frame.height);
-            std::memcpy(pixels.data(), frame.pixels, pixels.size() * sizeof(uint32_t));
+            copyFrame(pixels, frame);
             colorLayers.push_back(std::move(pixels));
             width = frame.width;
             height = frame.height;
@@ -206,8 +206,16 @@ struct Session {
         n64video_update_screen(&frame);
         if (!frame.valid) return {};
         std::vector<uint32_t> pixels(static_cast<size_t>(frame.width) * frame.height);
-        std::memcpy(pixels.data(), frame.pixels, pixels.size() * sizeof(uint32_t));
+        copyFrame(pixels, frame);
         return pixels;
+    }
+
+    static void copyFrame(std::vector<uint32_t>& pixels,
+                          const n64video_frame_buffer& frame) {
+        if (frame.pitch <= 0 || frame.pitch < frame.width) throw std::runtime_error("Invalid frame pitch.");
+        for (uint32_t y = 0; y < frame.height; ++y)
+            std::memcpy(pixels.data() + size_t(y) * frame.width,
+                        frame.pixels + size_t(y) * frame.pitch, frame.width * sizeof(uint32_t));
     }
 
     ~Session() {

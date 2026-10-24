@@ -49,6 +49,7 @@ struct Replay {
     std::vector<std::vector<uint32_t>> color;
     std::vector<Checkpoint> checkpoints;
     std::vector<std::pair<uint32_t, uint32_t>> geometry;
+    std::vector<uint8_t> states;
     uint64_t lastStateHash = 0;
 
     explicit Replay(uint32_t memoryBytes) : rdram(memoryBytes) {}
@@ -66,6 +67,7 @@ struct Replay {
         put(state.color); put(state.sx0); put(state.sy0); put(state.sx1); put(state.sy1);
         put(state.cycle);
         lastStateHash = fnv1a64(summary, sizeof(summary));
+        states.insert(states.end(), summary, summary + sizeof(summary));
         checkpoints.push_back({1, record, decoder.submissionCount(), decoder.commands, 0,
                                lastStateHash});
     }
@@ -109,17 +111,17 @@ struct Replay {
             return;
         }
         const int border = (hres - (hres - 7)) * scaledWidth / hres;
-        const int outputOffset = border / 2 + 1;
         const uint32_t outWidth = uint32_t(std::max(scaledWidth - border, 0));
         const uint32_t outHeight = uint32_t(std::min(scaledHeight, 576));
-        std::vector<uint32_t> pixels(outWidth * outHeight, 0xff000000u);
+        std::vector<uint32_t> pixels(outWidth * outHeight, 0);
         const uint32_t bytes = type == 2 ? 2 : 4;
         for (uint32_t y = 0; y < outHeight; ++y) {
                 const uint32_t sourceY = y;
             for (uint32_t x = 0; x < outWidth; ++x) {
-                const uint32_t sourceX = x + uint32_t(outputOffset);
-                const size_t address = (vi[1] & 0xffffffu) + (size_t(sourceY) * vi[2] + sourceX) * bytes;
-                if (sourceX >= vi[2] || address + bytes > rdram.size()) continue;
+                const uint32_t sourceX = x + uint32_t(border / 2 + 1);
+                const size_t address = ((vi[1] & 0xffffffu) & ~(bytes - 1)) +
+                                       (size_t(sourceY) * vi[2] + sourceX) * bytes;
+                if (address + bytes > rdram.size()) continue;
                 uint32_t word;
                 std::memcpy(&word, rdram.data() + (address & ~3u), 4);
                 if (bytes == 2) {
@@ -220,7 +222,9 @@ int main(int argc, char** argv) {
                     if (bytes == 4) {
                         std::memcpy(output.rdram.data() + address, &fill.color, 4);
                     } else {
-                        const uint16_t half = uint16_t(fill.color >> ((x & 1) ? 0 : 16));
+                        const uint32_t pixelIndex = (fill.address >> 1) +
+                                                    (size_t(y) * fill.width + x);
+                        const uint16_t half = uint16_t(fill.color >> ((pixelIndex & 1) ? 16 : 0));
                         std::memcpy(output.rdram.data() + address, &half, 2);
                     }
                 }
@@ -239,10 +243,10 @@ int main(int argc, char** argv) {
                     write(prefix, suffix.c_str(), output.color[i].data(),
                           output.color[i].size() * 4);
                 }
-                for (unsigned byte = 0; byte < 4; ++byte) {
+                for (unsigned byte = 0; byte < 4; ++byte)
                     geometryBytes.push_back(uint8_t(output.geometry[i].first >> (byte * 8)));
+                for (unsigned byte = 0; byte < 4; ++byte)
                     geometryBytes.push_back(uint8_t(output.geometry[i].second >> (byte * 8)));
-                }
             }
             for (const Checkpoint& item : output.checkpoints) {
                 appendLE(checkpointBytes, item.type);
@@ -255,6 +259,7 @@ int main(int argc, char** argv) {
             write(prefix, ".counts", counts.data(), counts.size());
             write(prefix, ".geometry", geometryBytes.data(), geometryBytes.size());
             write(prefix, ".checkpoints", checkpointBytes.data(), checkpointBytes.size());
+            write(prefix, ".states", output.states.data(), output.states.size());
             std::ofstream manifest(prefix + ".manifest", std::ios::binary | std::ios::trunc);
             require(bool(manifest), "Cannot write replay manifest.");
             manifest << "format=aurum-reference-layers/1\n"
@@ -264,6 +269,7 @@ int main(int argc, char** argv) {
                         "counts=little-endian-uint64-triples:color-depth-coverage\n"
                         "geometry=little-endian-uint32-pairs:width-height-per-vi\n"
                         "checkpoints=little-endian-uint64-sextuples:type-record-submission-command-vi-hash\n";
+            manifest << "states=256-byte-little-endian-uint32-grid:49-named-rdp-fields\n";
         }
 
         std::printf("{\"records\":%zu,\"submissions\":%llu,\"commands\":%llu,"

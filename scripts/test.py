@@ -93,6 +93,24 @@ assert (reference_dir / "fill.vi-coverage-7.rgba8").stat().st_size == 205 * 240 
 print(layer.stdout, end="")
 run([root / ".build/native/aurum-reference-diff", reference_dir / "fill",
      replay_dir / "fill", tests / "fill.aurcap"])
+fixtures = tests / "fixtures"
+run([sys.executable, root / "scripts/make_reference_fixtures.py", fixtures])
+for fixture in ("matrix", "boundary4", "boundary8"):
+    fixture_reference = fixtures / f"{fixture}.ref"
+    fixture_actual = fixtures / f"{fixture}.actual"
+    fixture_reference.mkdir(exist_ok=True)
+    fixture_actual.mkdir(exist_ok=True)
+    run([root / ".build/native/aurum-angrylion-reference",
+         fixtures / f"{fixture}.aurcap", fixture_reference / fixture])
+    run([root / ".build/native/aurum-aurcap-replay",
+         fixtures / f"{fixture}.aurcap", fixture_actual / fixture])
+    diff = subprocess.run([str(root / ".build/native/aurum-reference-diff"),
+                           fixture_reference / fixture, fixture_actual / fixture,
+                           fixtures / f"{fixture}.aurcap"], capture_output=True, text=True,
+                          timeout=30)
+    if diff.returncode:
+        raise RuntimeError(f"{fixture} differential failed: {diff.stdout}{diff.stderr}")
+    print(diff.stdout, end="")
 actual_dir = reference_dir / "actual"
 actual_dir.mkdir(exist_ok=True)
 run([root / ".build/native/aurum-angrylion-reference", tests / "fill.aurcap",

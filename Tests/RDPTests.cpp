@@ -48,14 +48,20 @@ int main(int argc, char** argv) {
         decoder.beginVI();
         require(decoder.recentCommands() == 6 && decoder.recentUnsupported() == 0,
                 "Recent VI sample statistics");
-        require(decoder.opcodeCount(0x00) == 0 && decoder.firstCommand(0x00) == UINT64_MAX,
-                "Absent opcode statistics");
+        const uint32_t noOpStream[] = {0, 0, 0xff100040, 0x40};
+        for (auto& word : noOpStream) decoder.push(std::span(&word, 1));
+        require(decoder.commands == 8 && decoder.opcodeCount(0x00) == 1 &&
+                decoder.stateSnapshot().width == 65,
+                "No-op command boundary");
         require(decoder.unsupported == 0, "Supported fill stream marked unsupported");
         for (unsigned y = 0; y < 8; ++y) for (unsigned x = 0; x < 8; ++x) {
             uint32_t word = ram[(0x1000 + (y*8+x)*2)/4];
-            unsigned value = (word >> ((x & 1) ? 0 : 16)) & 65535;
-            unsigned expected = y >= 1 && y < 3 && x >= 1 && x < 5 ? ((x & 1) ? 0x07c1 : 0xf801)
-                                                                               : ((x & 1) ? 0x3344 : 0x1122);
+            const unsigned halfIndex = (0x1000 / 2) + y * 8 + x;
+            const unsigned address = 0x1000 + (y * 8 + x) * 2;
+            unsigned value = (word >> ((address & 2) ? 16 : 0)) & 65535;
+            unsigned expected = y >= 1 && y < 3 && x >= 1 && x < 5
+                                    ? ((halfIndex & 1) ? 0xf801 : 0x07c1)
+                                    : ((halfIndex & 1) ? 0x1122 : 0x3344);
             require(value == expected, "Metal RGBA16 masked fill mismatch");
         }
         Fill rgba32{0x2000, 4, 3, 0x12345678, 1, 0, 3, 2};
@@ -67,7 +73,8 @@ int main(int argc, char** argv) {
         require(w == 4 && h == 2 && pixels[1] == 0xff563412, "RGBA32 VI conversion mismatch");
         vi = {2, 0x1000, 8, 8, 16, 1024, 1024};
         require(renderer.scanout(reinterpret_cast<uint8_t*>(ram.data()), ram.size()*4, vi,pixels,w,h,error),error.c_str());
-        require(pixels[9] == 0xff00ff00 && pixels[10] == 0xff0000ff, "RGBA5551 VI conversion mismatch");
+        require(pixels[9] == 0xff0000f8 && pixels[10] == 0xff00f800,
+                "RGBA5551 VI conversion mismatch");
         const uint32_t triangle[44] = {0xcf000000};
         decoder.push(std::span(triangle, 43));
         require(decoder.unsupported == 0, "Partial triangle consumed too early");
@@ -75,7 +82,7 @@ int main(int argc, char** argv) {
         require(decoder.unsupported == 1 && Decoder::wordCount(0x24) == 4, "Unsupported opcode accounting");
         const auto& context = decoder.firstUnsupported();
         require(context.valid && context.opcode == 0x0f && context.wordCount == 44 &&
-                context.capturedWords == 32 && context.command == 6 &&
+                context.capturedWords == 32 && context.command == 8 &&
                 context.submission == 1 && context.vi == 2 &&
                 context.words[0] == triangle[0], "Unsupported context");
         std::mt19937 random(0x64);
@@ -92,8 +99,9 @@ int main(int argc, char** argv) {
                 if (address + bytes > expected.size() * 4) continue;
                 if (bytes == 4) expected[address / 4] = test.color;
                 else {
-                    const auto shift = address % 4 ? 0 : 16;
-                    expected[address / 4] = (expected[address / 4] & ~(65535u << shift)) | (test.color & (65535u << shift));
+                    const auto half = (test.color >> ((address & 2) ? 16 : 0)) & 65535;
+                    const auto shift = address % 4 ? 16 : 0;
+                    expected[address / 4] = (expected[address / 4] & ~(65535u << shift)) | (half << shift);
                 }
             }
             require(renderer.fill(reinterpret_cast<uint8_t*>(actual.data()), actual.size() * 4, test, error), error.c_str());

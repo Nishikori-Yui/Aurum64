@@ -20,7 +20,8 @@ kernel void fillRectangle(device uint* ram [[buffer(0)]], constant Fill& f [[buf
         if (x < f.x0 || x >= f.x1 || y < f.y0 || y >= f.y1) continue;
         if (count == 1) result = f.color;
         else {
-            uint shift = (1 - lane) * 16;
+            uint pixelIndex = pixelAddress >> 1;
+            uint shift = (pixelIndex & 1) ? 16 : 0;
             result = (result & ~(65535u << shift)) | (f.color & (65535u << shift));
         }
     }
@@ -37,10 +38,10 @@ kernel void scanout(device const uint* ram [[buffer(0)]], device uint* output [[
     if (x < s.stride && address + bytes <= s.length) {
         uint value = ram[address >> 2];
         if (s.size == 2) {
-            value = (value >> ((address & 2) ? 0 : 16)) & 65535;
-            r = (value >> 11) & 31; r = (r << 3) | (r >> 2);
-            g = (value >> 6) & 31; g = (g << 3) | (g >> 2);
-            b = (value >> 1) & 31; b = (b << 3) | (b >> 2);
+            value = (value >> ((address & 2) ? 16 : 0)) & 65535;
+            r = (value >> 8) & 0xf8;
+            g = (value & 0x7c0) >> 3;
+            b = (value & 0x3e) << 2;
         } else { r = value >> 24; g = (value >> 16) & 255; b = (value >> 8) & 255; }
     }
     output[p.y * s.width + p.x] = r | (g << 8) | (b << 16) | 0xff000000;
