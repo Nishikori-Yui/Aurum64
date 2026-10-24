@@ -355,6 +355,30 @@ def texture_8bit_offset_fixture() -> bytes:
     return serialize(records)
 
 
+def sampler_rgba16_fixture() -> bytes:
+    """One clean RGBA16 upload, for checking the fetch path in isolation.
+
+    The combined texture fixtures stack several uploads that overwrite each
+    other's TMEM, so a sampler check against them cannot attribute a texel to
+    one upload. This fixture performs exactly one 8x8 LoadTile from a 16-wide
+    source into tmem unit 0 with line 2, leaving the whole tile intact.
+    """
+    width = height = 8
+    return _texture_capture(16, 16, [
+        set_tile(0, 0, 2, 2, 0) +
+        load_tile(0, 0, 0, (width - 1) << 2, (height - 1) << 2) + TEXTURE_SYNC,
+    ])
+
+
+def sampler_rgba32_fixture() -> bytes:
+    """One clean RGBA32 upload, for checking the fetch path in isolation."""
+    width = height = 8
+    return _texture_capture32(8, 8, [
+        set_tile(0, 0, 3, 2, 0) +
+        load_tile(0, 0, 0, (width - 1) << 2, (height - 1) << 2) + TEXTURE_SYNC,
+    ])
+
+
 def texture_stride_fixture() -> bytes:
     """Line strides of 1 and 4, and a non-zero tmem base, for LoadTile."""
     return _texture_capture(16, 16, [
@@ -400,6 +424,8 @@ def write_all(destination: pathlib.Path) -> None:
         "texture_ia8.aurcap": texture_8bit_fixture(3),
         "texture_i8.aurcap": texture_8bit_fixture(4),
         "texture_8bit_offset.aurcap": texture_8bit_offset_fixture(),
+        "sampler_rgba16.aurcap": sampler_rgba16_fixture(),
+        "sampler_rgba32.aurcap": sampler_rgba32_fixture(),
     }
     for name, data in fixtures.items():
         (destination / name).write_bytes(data)

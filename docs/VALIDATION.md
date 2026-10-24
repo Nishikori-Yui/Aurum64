@@ -187,3 +187,36 @@ an 8-bit texel exactly.
   concerns and are not exercised yet.
 - **YUV:** not implemented. Needs its own conversion coefficients and a
   different `tmem_formatting` path in the reference.
+
+# Explicit texture fetch - 2026-10-24
+
+## Completed locally
+
+| Check | Actual result |
+| --- | --- |
+| RGBA16 point fetch | Decodes a texel from reference TMEM with the RGBA5551 channel rules the VI scanout already applies |
+| RGBA32 point fetch | Recombines the two banks into one 32-bit texel and decodes it with the RGBA8888 rules |
+| Ground truth | `scripts/test.py` runs the fetch test against the `.tmem` layers that `aurum-angrylion-reference` produced, so the sampler is checked against hardware bytes rather than against the uploader that wrote them |
+| Addressing | Uses the same `tileWordIndex` as the uploader, plus a row-base range check against the 9-bit unit field |
+| Negative control | Replacing the fetch index with a variant that drops the odd-row swap fails when the reference layers are supplied |
+
+Two fixtures carry exactly one clean upload each, `sampler_rgba16` and
+`sampler_rgba32`. The combined texture fixtures stack uploads that overwrite
+each other's TMEM, so a texel there cannot be attributed to one upload; the test
+matrix requires TMEM, sampling and framebuffer to be compared separately for
+that reason.
+
+The negative control also shows why the reference layers matter: with no
+directory argument the test still passes, because the remaining cases only check
+the uploader and the sampler against each other.
+
+## Not validated / not complete
+
+- **Nothing renders yet.** The sampler has no consumer in the RDP path, so no
+  pixel output exercises it and TextureRectangle and Flip are not reached.
+- **8-bit and 4-bit texels:** rejected by the fetch. Turning a CI index into a
+  color needs TLUT lookup, and IA and I need their channel layouts.
+- **Coordinates:** no mask, mirror, clamp, shift, signed values or wrap, so only
+  texels inside the uploaded rectangle resolve.
+- **Filtering:** point sampling only. Three-point filtering, LOD, detail and
+  sharpen are separate work and must not receive a nearest sample silently.

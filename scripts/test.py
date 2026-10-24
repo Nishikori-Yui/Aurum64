@@ -99,7 +99,8 @@ for fixture in ("matrix", "boundary4", "boundary8", "texture", "texture_stride",
                 "texture_block", "texture_tlut", "texture_rgba32",
                 "texture_rgba32_offset", "texture_memory_record",
                 "texture_memory_record_fill", "texture_ci8", "texture_ia8",
-                "texture_i8", "texture_8bit_offset"):
+                "texture_i8", "texture_8bit_offset",
+                "sampler_rgba16", "sampler_rgba32"):
     fixture_reference = fixtures / f"{fixture}.ref"
     fixture_actual = fixtures / f"{fixture}.actual"
     fixture_reference.mkdir(exist_ok=True)
@@ -115,6 +116,11 @@ for fixture in ("matrix", "boundary4", "boundary8", "texture", "texture_stride",
     if diff.returncode:
         raise RuntimeError(f"{fixture} differential failed: {diff.stdout}{diff.stderr}")
     print(diff.stdout, end="")
+# The fetch test also runs against the reference TMEM layers generated above,
+# so the sampler is checked against hardware bytes and not only against the
+# uploader that wrote them.
+run([root / ".build/native/aurum-texture-fetch-tests", fixtures])
+
 # Pin the memory record's byte mapping to the independently validated fill
 # path: both fixtures write the same texels, so the reference engine must
 # produce the same RDRAM image for the region either way.
