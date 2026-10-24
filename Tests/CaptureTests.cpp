@@ -33,6 +33,7 @@ int main() {
         using aurum::capture::Record;
         using aurum::capture::kRecordEnd;
         using aurum::capture::kRecordInitial;
+        using aurum::capture::kRecordMemory;
         using aurum::capture::kRecordOptional;
         using aurum::capture::kRecordVI;
 
@@ -101,7 +102,39 @@ int main() {
         std::ostringstream unknownOutput;
         require(!aurum::capture::write(unknownOutput, unknownRequired, error),
                 "Unknown required capture chunk accepted by writer");
-        std::puts("PASS: CPU-only capture format, malformed inputs, sequence and chunk policy");
+
+        // A memory record places guest-order bytes into a word-swapped host
+        // buffer. Guest byte A lands at host A ^ 3. Asserted against literal
+        // host indices so the mapping is pinned to ground truth rather than to
+        // whatever both engines happen to agree on.
+        const Record memoryRecord{kRecordMemory, 1, {0x10, 0x00, 0x00, 0x00,
+                                                     0xde, 0xad, 0xbe, 0xef}};
+        aurum::capture::MemoryPayload payload;
+        require(aurum::capture::parseMemoryPayload(memoryRecord, payload),
+                "Memory payload with an address failed to parse");
+        require(payload.address == 0x10 && payload.count == 4,
+                "Memory payload parsed the wrong address or length");
+        std::vector<uint8_t> host(64, 0);
+        require(aurum::capture::applyMemoryPayload(payload, host),
+                "In-range memory payload rejected");
+        require(host[0x10 ^ 3] == 0xde && host[0x11 ^ 3] == 0xad &&
+                host[0x12 ^ 3] == 0xbe && host[0x13 ^ 3] == 0xef,
+                "Memory payload landed at the wrong host byte");
+        require(!aurum::capture::parseMemoryPayload({kRecordMemory, 1, {1, 2}},
+                                                     payload),
+                "Truncated memory payload accepted");
+        const Record overflow{kRecordMemory, 1, {0x3c, 0x00, 0x00, 0x00,
+                                                 1, 2, 3, 4, 5, 6, 7, 8}};
+        require(aurum::capture::parseMemoryPayload(overflow, payload),
+                "Overflowing memory payload failed to parse");
+        require(!aurum::capture::applyMemoryPayload(payload, host),
+                "Memory payload past the end of RDRAM accepted");
+        // The rejected record must not have left a partial write behind.
+        require(host[0x3c ^ 3] == 0 && host[0x3d ^ 3] == 0 &&
+                host[0x3e ^ 3] == 0 && host[0x3f ^ 3] == 0,
+                "Rejected memory record modified RDRAM");
+
+        std::puts("PASS: CPU-only capture format, malformed inputs, sequence and chunk policy, memory records");
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: %s\n", error.what());
         return 1;

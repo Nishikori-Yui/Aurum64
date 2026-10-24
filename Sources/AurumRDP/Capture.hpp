@@ -26,6 +26,20 @@ enum RecordType : uint32_t {
 constexpr uint32_t kMaxChunkBytes = 1u << 20;
 constexpr uint64_t kMaxCaptureBytes = 64ull << 20;
 
+// Payload layout of a kRecordMemory record: a little-endian N64 byte address
+// followed by that many guest-order bytes.
+struct MemoryPayload {
+    uint32_t address = 0;
+    const uint8_t* bytes = nullptr;
+    size_t count = 0;
+};
+bool parseMemoryPayload(const Record& record, MemoryPayload& payload);
+
+// Applies a memory record to a host buffer whose words are byte swapped, which
+// is how both the capture's RDRAM image and the .rdram layer are laid out.
+// Guest byte address A maps to host address A ^ 3.
+bool applyMemoryPayload(const MemoryPayload& payload, std::span<uint8_t> host);
+
 bool write(std::ostream& output, std::span<const Record> records, std::string& error);
 bool read(std::istream& input, std::vector<Record>& records, std::string& error,
           uint64_t maxBytes = kMaxCaptureBytes);

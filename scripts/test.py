@@ -97,7 +97,8 @@ fixtures = tests / "fixtures"
 run([sys.executable, root / "scripts/make_reference_fixtures.py", fixtures])
 for fixture in ("matrix", "boundary4", "boundary8", "texture", "texture_stride",
                 "texture_block", "texture_tlut", "texture_rgba32",
-                "texture_rgba32_offset"):
+                "texture_rgba32_offset", "texture_memory_record",
+                "texture_memory_record_fill"):
     fixture_reference = fixtures / f"{fixture}.ref"
     fixture_actual = fixtures / f"{fixture}.actual"
     fixture_reference.mkdir(exist_ok=True)
@@ -113,6 +114,17 @@ for fixture in ("matrix", "boundary4", "boundary8", "texture", "texture_stride",
     if diff.returncode:
         raise RuntimeError(f"{fixture} differential failed: {diff.stdout}{diff.stderr}")
     print(diff.stdout, end="")
+# Pin the memory record's byte mapping to the independently validated fill
+# path: both fixtures write the same texels, so the reference engine must
+# produce the same RDRAM image for the region either way.
+record_ref = fixtures / "texture_memory_record.ref" / "texture_memory_record.rdram"
+fill_ref = fixtures / "texture_memory_record_fill.ref" / "texture_memory_record_fill.rdram"
+record_region = record_ref.read_bytes()[0x200000:0x200000 + 32]
+fill_region = fill_ref.read_bytes()[0x200000:0x200000 + 32]
+assert record_region == fill_region and record_region.count(0) < 32, \
+    "memory record byte mapping disagrees with the fill path"
+print("memory record RDRAM mapping matches the fill path")
+
 actual_dir = reference_dir / "actual"
 actual_dir.mkdir(exist_ok=True)
 run([root / ".build/native/aurum-angrylion-reference", tests / "fill.aurcap",

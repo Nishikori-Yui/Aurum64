@@ -143,10 +143,20 @@ struct Replay {
     }
 };
 
+void applyMemory(Replay& output, const aurum::capture::Record& record) {
+    aurum::capture::MemoryPayload payload;
+    require(aurum::capture::parseMemoryPayload(record, payload),
+            "Memory record has no address.");
+    require(aurum::capture::applyMemoryPayload(payload, output.rdram),
+            "Memory record is outside RDRAM.");
+}
+
 void replay(aurum::rdp::Decoder& decoder, Replay& output,
             const std::vector<aurum::capture::Record>& records) {
     for (const auto& record : records) {
-        if (record.type == aurum::capture::kRecordRDP) {
+        if (record.type == aurum::capture::kRecordMemory) {
+            applyMemory(output, record);
+        } else if (record.type == aurum::capture::kRecordRDP) {
             if (record.payload.size() < 16 || (record.payload.size() - 16) % 4 != 0)
                 throw std::runtime_error("Invalid RDP submission payload.");
             decoder.beginSubmission();

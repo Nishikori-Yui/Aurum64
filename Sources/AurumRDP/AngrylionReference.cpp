@@ -124,6 +124,14 @@ struct Session {
         initialized = true;
     }
 
+    void memory(const aurum::capture::Record& record) {
+        aurum::capture::MemoryPayload payload;
+        require(aurum::capture::parseMemoryPayload(record, payload),
+                "Memory record has no address.");
+        require(aurum::capture::applyMemoryPayload(payload, rdram),
+                "Memory record is outside RDRAM.");
+    }
+
     void submission(const aurum::capture::Record& record) {
         require(record.payload.size() >= 16 && (record.payload.size() - 16) % 4 == 0,
                 "Invalid RDP submission payload.");
@@ -275,7 +283,10 @@ int main(int argc, char** argv) {
         Session session{memoryBytes};
         session.configure();
         for (const auto& record : records) {
-            if (record.type == aurum::capture::kRecordRDP) session.submission(record);
+            if (record.type == aurum::capture::kRecordMemory)
+                session.memory(record);
+            else if (record.type == aurum::capture::kRecordRDP)
+                session.submission(record);
             else if (record.type == aurum::capture::kRecordVI) {
                 session.video(record);
                 session.captureFrame();

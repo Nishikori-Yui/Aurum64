@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "Capture.hpp"
+#include "MemoryBus.hpp"
 #include <array>
 #include <algorithm>
 #include <cstring>
@@ -9,6 +10,32 @@
 #include <utility>
 
 namespace aurum::capture {
+bool parseMemoryPayload(const Record& record, MemoryPayload& payload) {
+    if (record.payload.size() < sizeof(uint32_t)) return false;
+    payload.address = uint32_t(record.payload[0]) |
+                      uint32_t(record.payload[1]) << 8 |
+                      uint32_t(record.payload[2]) << 16 |
+                      uint32_t(record.payload[3]) << 24;
+    payload.bytes = record.payload.data() + sizeof(uint32_t);
+    payload.count = record.payload.size() - sizeof(uint32_t);
+    return true;
+}
+
+bool applyMemoryPayload(const MemoryPayload& payload, std::span<uint8_t> host) {
+    // Validate the whole span before writing so a rejected record cannot leave
+    // RDRAM partially modified.
+    for (size_t i = 0; i < payload.count; ++i) {
+        const uint64_t guest = uint64_t(payload.address) + i;
+        if (guest > UINT32_MAX) return false;
+        if (aurum::memory::hostByteAddress(uint32_t(guest)) >= host.size())
+            return false;
+    }
+    for (size_t i = 0; i < payload.count; ++i)
+        host[aurum::memory::hostByteAddress(payload.address + uint32_t(i))] =
+            payload.bytes[i];
+    return true;
+}
+
 namespace {
 constexpr std::array<uint8_t, 8> kMagic{'A', 'U', 'R', 'C', 'A', 'P', 1, 0};
 constexpr uint32_t kEndianMarker = 0x01020304;

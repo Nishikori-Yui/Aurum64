@@ -23,6 +23,16 @@ def initial(memory: int) -> bytes:
     return chunk(1, 1, struct.pack("<II", memory, 0))
 
 
+def memory(sequence: int, address: int, data: bytes) -> bytes:
+    """A record that places guest-order bytes directly into RDRAM.
+
+    Needed for texel formats a fill cannot express exactly, such as 8-bit
+    indices. The payload is a little-endian N64 byte address followed by that
+    many guest-order bytes.
+    """
+    return chunk(2, sequence, struct.pack("<I", address) + data)
+
+
 def rdp(sequence: int, base: int, words: list[int]) -> bytes:
     payload = struct.pack("<IIII", base, base + 4 * len(words), 0, 0)
     payload += b"".join(struct.pack(">I", word) for word in words)
@@ -241,6 +251,62 @@ def texture_rgba32_offset_fixture() -> bytes:
     ], source=TEXTURE_SRC + 4)
 
 
+TEXTURE_RECORD_WIDTH = 4
+TEXTURE_RECORD_HEIGHT = 4
+
+
+def _texture_record_texel(y: int, x: int) -> int:
+    return 0x1000 + y * 0x10 + x
+
+
+def texture_memory_record_fixture() -> bytes:
+    """Place RGBA16 texels with a memory record, then upload with LoadTile.
+
+    The texel bytes are written directly instead of through fills, which is the
+    path 8-bit texel formats need. The resulting TMEM still has to match the
+    reference byte-for-byte.
+    """
+    width = TEXTURE_RECORD_WIDTH
+    height = TEXTURE_RECORD_HEIGHT
+    texels = bytearray()
+    for y in range(height):
+        for x in range(width):
+            texels += struct.pack(">H", _texture_record_texel(y, x))
+
+    records = [
+        initial(8 << 20),
+        memory(2, TEXTURE_SRC, bytes(texels)),
+        rdp(3, 0x100000, scissor(0, 0, width * 4, height * 4) +
+            set_texture_image(0, 2, width, TEXTURE_SRC) +
+            set_tile(0, 0, 2, 2, 0) +
+            load_tile(0, 0, 0, (width - 1) << 2, (height - 1) << 2) + TEXTURE_SYNC),
+        vi(4, 2, TEXTURE_FB, 64),
+    ]
+    return serialize(records)
+
+
+def texture_memory_record_fill_fixture() -> bytes:
+    """The same texels as texture_memory_record_fixture, written with fills.
+
+    The fill path was validated against the reference long before memory
+    records existed, so comparing the two fixtures' reference RDRAM images
+    pins the record's byte mapping to independent ground truth instead of to
+    whatever the replay and the reference happen to agree on.
+    """
+    width = TEXTURE_RECORD_WIDTH
+    height = TEXTURE_RECORD_HEIGHT
+    words = scissor(0, 0, width * 4, height * 4) + [0xef300000, 0]
+    for y in range(height):
+        for x in range(width):
+            value = _texture_record_texel(y, x)
+            words += set_image(2, TEXTURE_SRC, width) + [0xf7000000, value << 16 | value]
+            words += [0xf6000000 | (x * 4 + 3) << 12 | (y * 4 + 3),
+                      (x * 4) << 12 | (y * 4)]
+    words += TEXTURE_SYNC
+    return serialize([initial(8 << 20), rdp(2, 0x100000, words),
+                      vi(3, 2, TEXTURE_FB, 64)])
+
+
 def texture_stride_fixture() -> bytes:
     """Line strides of 1 and 4, and a non-zero tmem base, for LoadTile."""
     return _texture_capture(16, 16, [
@@ -280,6 +346,8 @@ def write_all(destination: pathlib.Path) -> None:
         "texture_tlut.aurcap": texture_tlut_fixture(),
         "texture_rgba32.aurcap": texture_rgba32_fixture(),
         "texture_rgba32_offset.aurcap": texture_rgba32_offset_fixture(),
+        "texture_memory_record.aurcap": texture_memory_record_fixture(),
+        "texture_memory_record_fill.aurcap": texture_memory_record_fill_fixture(),
     }
     for name, data in fixtures.items():
         (destination / name).write_bytes(data)

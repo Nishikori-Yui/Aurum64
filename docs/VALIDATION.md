@@ -125,3 +125,35 @@ banks.
   emit these, so the diff tool still lists them as unavailable.
 - **Texture sampling:** no fetch path consumes TMEM yet, so upload correctness is
   not yet exercised by a rendered pixel.
+
+# Capture memory record - 2026-10-24
+
+## Completed locally
+
+| Check | Actual result |
+| --- | --- |
+| `kRecordMemory` consumer | Implemented in both the scalar replay and the reference harness, sharing one helper in `Capture.cpp` so the two cannot drift apart |
+| Byte mapping | A guest byte at N64 address `A` is stored at host address `A ^ 3`, matching the word-swapped layout of the `.rdram` layer |
+| Ground truth | The mapping is asserted against the fill path, which was validated against the reference before memory records existed, not against the two engines agreeing with each other |
+| Bounds | A record that runs past the end of RDRAM is rejected and leaves RDRAM unmodified |
+
+Two fixtures cover this: `texture_memory_record` writes four rows of RGBA16
+texels with a memory record and uploads them with LoadTile, and
+`texture_memory_record_fill` writes the same texels with fills.
+`scripts/test.py` compares the reference RDRAM image of the two over the source
+region and fails if they differ.
+
+Negative controls confirm both checks are load bearing. Changing the mapping to
+`A ^ 2` makes the unit test fail and makes the two fixtures' reference images
+differ, and restoring the previous write-while-validating loop makes the
+rejected-record test fail because RDRAM keeps a partial write.
+
+## Not validated / not complete
+
+- **No producer yet.** Nothing in the emulator emits a memory record, so the
+  path is exercised only by fixtures. Capturing CPU stores would be needed to
+  record real 8-bit texture sources.
+- **8-bit texel formats.** CI4, CI8, IA and I uploads are still unimplemented.
+  The memory record was a prerequisite because a fill cannot place an 8-bit
+  texel exactly, and the first probe at CI8 produced a source buffer that the
+  replay's fill path had mislaid, so its TMEM output was not meaningful.
