@@ -2,6 +2,7 @@
 #include "Capture.hpp"
 #include "MemoryBus.hpp"
 #include "RDP.hpp"
+#include "TextureUpload.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
@@ -47,6 +48,7 @@ struct Checkpoint {
 
 struct Replay {
     std::vector<uint8_t> rdram;
+    aurum::texture::Uploader textures;
     std::vector<std::vector<uint32_t>> color;
     std::vector<Checkpoint> checkpoints;
     std::vector<std::pair<uint32_t, uint32_t>> geometry;
@@ -230,6 +232,28 @@ int main(int argc, char** argv) {
                     }
                 }
             }
+        };
+        decoder.textureLoad = [&](const aurum::rdp::TextureLoad& load) {
+            // Only the RGBA16 path is modeled. Anything else stays reported as
+            // unsupported instead of producing a plausible-looking TMEM.
+            if (load.tiSize != 2) return false;
+            // TMEM accumulates across uploads, so the same store is reused.
+            // A rejected upload leaves it untouched.
+            aurum::texture::Uploader& uploader = output.textures;
+            uploader.setTextureImage(load.tiFormat, load.tiSize, load.tiWidth,
+                                     load.tiAddress);
+            uploader.setTile(load.tile, load.tileTmem, load.tileLine);
+            if (load.opcode == 0x30)
+                return uploader.loadTlut(output.rdram.data(), output.rdram.size(),
+                                         load.tile, load.sl, load.tl, load.sh,
+                                         load.th);
+            if (load.opcode == 0x33)
+                return uploader.loadBlock(output.rdram.data(),
+                                          output.rdram.size(), load.tile,
+                                          load.sl, load.tl, load.sh, load.dxt);
+            return uploader.loadTile(output.rdram.data(), output.rdram.size(),
+                                     load.tile, load.sl, load.tl, load.sh,
+                                     load.th);
         };
         replay(decoder, output, records);
         if (emitLayers) {

@@ -11,6 +11,15 @@ struct Fill {
     uint32_t address, width, size, color;
     uint32_t x0, y0, x1, y1;
 };
+// Decoded texture upload request handed to the texture callback.
+struct TextureLoad {
+    uint32_t opcode = 0;   // 0x30 LoadTLUT, 0x33 LoadBlock, 0x34 LoadTile
+    uint32_t tile = 0;
+    uint32_t tileFormat = 0, tileSize = 0, tileLine = 0, tileTmem = 0;
+    uint32_t tiFormat = 0, tiSize = 0, tiWidth = 0, tiAddress = 0;
+    uint32_t sl = 0, tl = 0, sh = 0, th = 0;
+    uint32_t dxt = 0;      // LoadBlock only
+};
 struct UnsupportedContext {
     uint32_t valid = 0, opcode = 0, wordCount = 0, capturedWords = 0;
     uint64_t command = 0, submission = 0, vi = 0;
@@ -33,6 +42,9 @@ class Decoder {
 public:
     Decoder() { reset(); }
     std::function<void(const Fill&)> fill;
+    // Returns true when the upload was modeled. A rejected or missing handler
+    // is reported as unsupported rather than silently ignored.
+    std::function<bool(const TextureLoad&)> textureLoad;
     std::function<void()> sync;
     uint64_t commands = 0, unsupported = 0;
     uint64_t opcodeCount(uint8_t opcode) const;

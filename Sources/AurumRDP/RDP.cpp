@@ -137,16 +137,36 @@ void Decoder::execute(std::span<const uint32_t> w) {
         tileSizes_[tile * 4 + 3] = b & 0xfff;
         break;
     }
-    case 0x33:
-    case 0x34:
     case 0x35: {
         const uint32_t tile = (b >> 24) & 7;
-        if (opcode == 0x35) {
-            tiles[tile * 4 + 0] = (a >> 21) & 7;
-            tiles[tile * 4 + 1] = (a >> 19) & 3;
-            tiles[tile * 4 + 2] = (a >> 9) & 0x1ff;
-            tiles[tile * 4 + 3] = a & 0x1ff;
-        }
+        tiles[tile * 4 + 0] = (a >> 21) & 7;
+        tiles[tile * 4 + 1] = (a >> 19) & 3;
+        tiles[tile * 4 + 2] = (a >> 9) & 0x1ff;
+        tiles[tile * 4 + 3] = a & 0x1ff;
+        break;
+    }
+    case 0x30:
+    case 0x33:
+    case 0x34: {
+        // LoadTLUT, LoadBlock and LoadTile. The tile descriptor from SetTile
+        // and the SetTextureImage state are carried along so the handler can
+        // resolve the source layout and TMEM destination.
+        const uint32_t tile = (b >> 24) & 7;
+        TextureLoad load;
+        load.opcode = opcode;
+        load.tile = tile;
+        load.tileFormat = tiles[tile * 4 + 0];
+        load.tileSize = tiles[tile * 4 + 1];
+        load.tileLine = tiles[tile * 4 + 2];
+        load.tileTmem = tiles[tile * 4 + 3];
+        load.tiFormat = tiFormat; load.tiSize = tiSize;
+        load.tiWidth = tiWidth; load.tiAddress = tiAddress;
+        load.sl = (a >> 12) & 0xfff;
+        load.tl = a & 0xfff;
+        load.sh = (b >> 12) & 0xfff;
+        load.th = b & 0xfff;
+        if (opcode == 0x33) load.dxt = load.th;
+        if (!textureLoad || !textureLoad(load)) markUnsupported(w);
         break;
     }
     case 0x37: color = b; break;

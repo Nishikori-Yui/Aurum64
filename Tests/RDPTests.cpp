@@ -135,6 +135,45 @@ int main(int argc, char** argv) {
                 decodedState.zbAddress == state.zbAddress &&
                 decodedState.tiles == state.tiles,
                 "RDP state snapshot round-trip");
+        decoder.reset();
+        decoder.beginSubmission();
+        std::vector<TextureLoad> loads;
+        decoder.textureLoad = [&](const TextureLoad& load) {
+            loads.push_back(load);
+            return true;
+        };
+        const uint32_t textureCommands[] = {
+            // SetTextureImage RGBA16, stride 8, address 0x1000
+            0xfd000000 | (0 << 21) | (2 << 19) | 7, 0x00001000,
+            // SetTile tile 1: format 0, size 2, line 1, tmem 4
+            0xf5000000 | (0 << 21) | (2 << 19) | (1 << 9) | 4, 1 << 24,
+            // LoadTile tile 1, sl 0, tl 0, sh 8, th 4
+            0xf4000000 | (0 << 12) | 0, (1 << 24) | (8 << 12) | 4,
+            // LoadBlock tile 1, sl 0, tl 0, sh 8, dxt 0x40
+            0xf3000000 | (0 << 12) | 0, (1 << 24) | (8 << 12) | 0x40,
+            // LoadTLUT tile 1, sl 0, tl 0, sh 4, th 0
+            0xf0000000 | (0 << 12) | 0, (1 << 24) | (4 << 12) | 0};
+        decoder.push(textureCommands);
+        require(decoder.unsupported == 0 && loads.size() == 3,
+                "Texture load opcodes reported");
+        require(loads[0].opcode == 0x34 && loads[0].tile == 1 &&
+                loads[0].tileSize == 2 && loads[0].tileLine == 1 &&
+                loads[0].tileTmem == 4 && loads[0].tiSize == 2 &&
+                loads[0].tiWidth == 8 && loads[0].tiAddress == 0x1000 &&
+                loads[0].sl == 0 && loads[0].sh == 8 && loads[0].th == 4,
+                "LoadTile decoded fields");
+        require(loads[1].opcode == 0x33 && loads[1].dxt == 0x40,
+                "LoadBlock decoded fields");
+        require(loads[2].opcode == 0x30 && loads[2].sh == 4 && loads[2].th == 0,
+                "LoadTLUT decoded fields");
+        decoder.textureLoad = [](const TextureLoad&) { return false; };
+        decoder.push(std::span(textureCommands + 4, 2));
+        require(decoder.unsupported == 1 && decoder.firstUnsupported().opcode == 0x34,
+                "Rejected texture load reported as unsupported");
+        decoder.textureLoad = nullptr;
+        decoder.push(std::span(textureCommands + 4, 2));
+        require(decoder.unsupported == 2,
+                "Missing texture load handler reported as unsupported");
         std::mt19937 random(0x64);
         for (unsigned trial = 0; trial < 48; ++trial) {
             std::vector<uint32_t> actual(16384), expected;
