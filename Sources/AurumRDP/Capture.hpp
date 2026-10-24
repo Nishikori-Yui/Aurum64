@@ -14,6 +14,15 @@ struct Record {
     bool operator==(const Record&) const = default;
 };
 
+enum RecordType : uint32_t {
+    kRecordInitial = 1,
+    kRecordMemory = 2,
+    kRecordRDP = 3,
+    kRecordVI = 4,
+    kRecordEnd = 0xffff,
+    kRecordOptional = 0x80000000u,
+};
+
 constexpr uint32_t kMaxChunkBytes = 1u << 20;
 constexpr uint64_t kMaxCaptureBytes = 64ull << 20;
 

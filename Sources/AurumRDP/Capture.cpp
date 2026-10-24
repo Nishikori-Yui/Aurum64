@@ -39,6 +39,10 @@ uint64_t get64(const uint8_t* p) {
 bool readExact(std::istream& input, uint8_t* data, size_t size) {
     return size == 0 || static_cast<bool>(input.read(reinterpret_cast<char*>(data), size));
 }
+bool knownRequiredType(uint32_t type) {
+    return type == kRecordInitial || type == kRecordMemory || type == kRecordRDP ||
+           type == kRecordVI || type == kRecordEnd;
+}
 }
 
 bool write(std::ostream& output, std::span<const Record> records, std::string& error) {
@@ -56,6 +60,10 @@ bool write(std::ostream& output, std::span<const Record> records, std::string& e
     bool havePrevious = false;
     uint64_t previousSequence = 0;
     for (const Record& record : records) {
+        const uint32_t requiredType = record.type & ~kRecordOptional;
+        if (!(record.type & kRecordOptional) && !knownRequiredType(requiredType)) {
+            error = "Unknown required capture chunk."; return false;
+        }
         if (havePrevious && record.sequence <= previousSequence) {
             error = "Capture sequence is not monotonic."; return false;
         }
@@ -115,11 +123,16 @@ bool read(std::istream& input, std::vector<Record>& records, std::string& error,
         record.payload.resize(length);
         if (!readExact(input, record.payload.data(), length)) { error = "Truncated capture chunk."; return false; }
         if (checksum(record.payload) != get32(chunk.data() + 16)) { error = "Capture checksum mismatch."; return false; }
+        const uint32_t requiredType = record.type & ~kRecordOptional;
+        if (!(record.type & kRecordOptional) && !knownRequiredType(requiredType)) {
+            error = "Unknown required capture chunk."; return false;
+        }
         if (havePrevious && record.sequence <= previousSequence) {
             error = "Capture sequence is not monotonic."; return false;
         }
         havePrevious = true;
         previousSequence = record.sequence;
+        if (record.type & kRecordOptional) continue;
         records.push_back(std::move(record));
         total += kChunkHeaderBytes + length;
     }
