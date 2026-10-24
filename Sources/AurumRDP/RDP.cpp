@@ -5,6 +5,30 @@
 #include <limits>
 
 namespace aurum::rdp {
+std::array<uint32_t, 64> StateSnapshot::words() const {
+    std::array<uint32_t, 64> result{};
+    result[0] = fbFormat; result[1] = fbSize; result[2] = fbWidth; result[3] = fbAddress;
+    result[4] = fillColor; result[5] = clipXh; result[6] = clipYh; result[7] = clipXl;
+    result[8] = clipYl; result[9] = cycleType; result[10] = imageReadEn;
+    result[11] = zUpdateEn; result[12] = zCompareEn; result[13] = tiFormat;
+    result[14] = tiSize; result[15] = tiWidth; result[16] = tiAddress; result[17] = zbAddress;
+    for (size_t i = 0; i < tiles.size(); ++i) result[18 + i] = tiles[i];
+    result[63] = kVersion;
+    return result;
+}
+
+StateSnapshot StateSnapshot::fromWords(const std::array<uint32_t, 64>& words) {
+    StateSnapshot result;
+    result.fbFormat = words[0]; result.fbSize = words[1]; result.fbWidth = words[2];
+    result.fbAddress = words[3]; result.fillColor = words[4]; result.clipXh = words[5];
+    result.clipYh = words[6]; result.clipXl = words[7]; result.clipYl = words[8];
+    result.cycleType = words[9]; result.imageReadEn = words[10]; result.zUpdateEn = words[11];
+    result.zCompareEn = words[12]; result.tiFormat = words[13]; result.tiSize = words[14];
+    result.tiWidth = words[15]; result.tiAddress = words[16]; result.zbAddress = words[17];
+    for (size_t i = 0; i < result.tiles.size(); ++i) result.tiles[i] = words[18 + i];
+    return result;
+}
+
 size_t Decoder::wordCount(uint8_t op) {
     // Keep this table aligned with Angrylion's 64-entry command dispatch table.
     static constexpr std::array<uint8_t, 64> words = {

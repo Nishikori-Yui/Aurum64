@@ -250,7 +250,7 @@ int main(int argc, char** argv) {
                 "counts=little-endian-uint64-triples:color-depth-coverage\n"
                 "geometry=little-endian-uint32-pairs:width-height-per-vi\n"
                 "checkpoints=little-endian-uint64-sextuples:type-record-submission-command-vi-hash\n"
-                "states=256-byte-little-endian-uint64-grid:49-named-rdp-fields\n";
+                "states=256-byte-little-endian-uint64-grid:v1:49-named-rdp-fields\n";
         }
         std::ifstream input(argv[1], std::ios::binary);
         if (!input) throw std::runtime_error("Cannot open capture.");

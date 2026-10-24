@@ -18,11 +18,14 @@ struct UnsupportedContext {
 };
 
 struct StateSnapshot {
+    static constexpr uint32_t kVersion = 1;
     uint32_t fbFormat = 0, fbSize = 0, fbWidth = 0, fbAddress = 0, fillColor = 0;
     uint32_t clipXh = 0, clipYh = 0, clipXl = 0, clipYl = 0, cycleType = 0;
     uint32_t imageReadEn = 0, zUpdateEn = 0, zCompareEn = 0;
     uint32_t tiFormat = 0, tiSize = 0, tiWidth = 0, tiAddress = 0, zbAddress = 0;
     std::array<uint32_t, 32> tiles{};
+    std::array<uint32_t, 64> words() const;
+    static StateSnapshot fromWords(const std::array<uint32_t, 64>& words);
 };
 
 // Commands use host-order 32-bit words, as in Mupen's word-swapped RDRAM.

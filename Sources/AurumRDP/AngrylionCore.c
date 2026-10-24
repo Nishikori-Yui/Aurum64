@@ -30,6 +30,7 @@ void n64video_rdp_state_summary(uint8_t* output) {
         words[index++] = (uint32_t)wstate->tile[tile].tmem;
     }
     while (index < 64) words[index++] = 0;
+    words[63] = 1;
 }
 
 const uint8_t* n64video_tmem(void) {

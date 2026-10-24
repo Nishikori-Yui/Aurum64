@@ -124,6 +124,13 @@ int main(int argc, char** argv) {
                 state.tiles[12] == 3 && state.tiles[13] == 2 &&
                 state.tiles[14] == 17 && state.tiles[15] == 0x88,
                 "RDP state snapshot fields");
+        const auto encodedState = state.words();
+        const auto decodedState = StateSnapshot::fromWords(encodedState);
+        require(encodedState[63] == StateSnapshot::kVersion &&
+                decodedState.tiAddress == state.tiAddress &&
+                decodedState.zbAddress == state.zbAddress &&
+                decodedState.tiles == state.tiles,
+                "RDP state snapshot round-trip");
         std::mt19937 random(0x64);
         for (unsigned trial = 0; trial < 48; ++trial) {
             std::vector<uint32_t> actual(16384), expected;

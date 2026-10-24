@@ -57,20 +57,10 @@ struct Replay {
     void stateCheckpoint(const aurum::rdp::Decoder& decoder, uint64_t record) {
         require(decoder.hasState(), "Capture has no RDP state before submission.");
         const auto state = decoder.stateSnapshot();
-        uint8_t summary[256]{};
-        size_t offset = 0;
-        auto put = [&](uint32_t value) {
-            std::memcpy(summary + offset, &value, 4);
-            offset += 4;
-        };
-        put(state.fbFormat); put(state.fbSize); put(state.fbWidth); put(state.fbAddress);
-        put(state.fillColor); put(state.clipXh); put(state.clipYh); put(state.clipXl);
-        put(state.clipYl); put(state.cycleType); put(state.imageReadEn);
-        put(state.zUpdateEn); put(state.zCompareEn); put(state.tiFormat);
-        put(state.tiSize); put(state.tiWidth); put(state.tiAddress); put(state.zbAddress);
-        for (uint32_t tile : state.tiles) put(tile);
-        lastStateHash = fnv1a64(summary, sizeof(summary));
-        states.insert(states.end(), summary, summary + sizeof(summary));
+        const auto stateWords = state.words();
+        const auto* summary = reinterpret_cast<const uint8_t*>(stateWords.data());
+        lastStateHash = fnv1a64(summary, sizeof(stateWords));
+        states.insert(states.end(), summary, summary + sizeof(stateWords));
         checkpoints.push_back({1, record, decoder.submissionCount(), decoder.commands, 0,
                                lastStateHash});
     }
@@ -272,7 +262,7 @@ int main(int argc, char** argv) {
                         "counts=little-endian-uint64-triples:color-depth-coverage\n"
                         "geometry=little-endian-uint32-pairs:width-height-per-vi\n"
                         "checkpoints=little-endian-uint64-sextuples:type-record-submission-command-vi-hash\n";
-            manifest << "states=256-byte-little-endian-uint32-grid:49-named-rdp-fields\n";
+            manifest << "states=256-byte-little-endian-uint32-grid:v1:49-named-rdp-fields\n";
         }
 
         std::printf("{\"records\":%zu,\"submissions\":%llu,\"commands\":%llu,"
