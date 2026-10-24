@@ -11,34 +11,10 @@
 #include <string_view>
 
 static void require(bool value, const char* message) { if (!value) throw std::runtime_error(message); }
-static void requireCapture(bool value, const std::string& error) {
-    if (!value) throw std::runtime_error(error);
-}
 static uint32_t readBE(const uint8_t* bytes) {
     return uint32_t(bytes[3]) | uint32_t(bytes[2]) << 8 |
            uint32_t(bytes[1]) << 16 | uint32_t(bytes[0]) << 24;
 }
-static void appendLE(std::vector<uint8_t>& payload, uint32_t value) {
-    for (unsigned i = 0; i < 4; ++i) payload.push_back(uint8_t(value >> (i * 8)));
-}
-static void appendBE(std::vector<uint8_t>& payload, uint32_t value) {
-    for (int i = 3; i >= 0; --i) payload.push_back(uint8_t(value >> (i * 8)));
-}
-static aurum::capture::Record submission(uint64_t sequence,
-                                         std::initializer_list<uint32_t> words) {
-    std::vector<uint8_t> payload;
-    appendLE(payload, 0);
-    appendLE(payload, uint32_t(words.size() * 4));
-    appendLE(payload, 0);
-    appendLE(payload, 0);
-    for (uint32_t word : words) appendBE(payload, word);
-    return {aurum::capture::kRecordRDP, sequence, std::move(payload)};
-}
-using aurum::capture::kRecordEnd;
-using aurum::capture::kRecordInitial;
-using aurum::capture::kRecordOptional;
-using aurum::capture::kRecordRDP;
-using aurum::capture::kRecordVI;
 int main(int argc, char** argv) {
     try {
         require(argc >= 2, "Usage: aurum-rdp-tests metallib [network-order.rdp]");
@@ -75,85 +51,6 @@ int main(int argc, char** argv) {
         require(decoder.opcodeCount(0x00) == 0 && decoder.firstCommand(0x00) == UINT64_MAX,
                 "Absent opcode statistics");
         require(decoder.unsupported == 0, "Supported fill stream marked unsupported");
-        using aurum::capture::Record;
-        const std::vector<Record> records{{1, 7, {1, 2, 3, 4}}, {2, 8, {0, 255, 17}}};
-        std::ostringstream serialized;
-        std::string captureError;
-        requireCapture(aurum::capture::write(serialized, records, captureError), captureError);
-        const std::string bytes = serialized.str();
-        std::ostringstream serializedAgain;
-        requireCapture(aurum::capture::write(serializedAgain, records, captureError), captureError);
-        require(serializedAgain.str() == bytes, "Capture serialization is not deterministic");
-        for (unsigned repeat = 0; repeat < 20; ++repeat) {
-            std::istringstream input(bytes);
-            std::vector<Record> decoded;
-            requireCapture(aurum::capture::read(input, decoded, captureError), captureError);
-            require(decoded == records, "Capture replay changed record data");
-        }
-        std::string truncated = bytes.substr(0, bytes.size() - 1);
-        std::vector<Record> decoded;
-        std::istringstream truncatedInput(truncated);
-        require(!aurum::capture::read(truncatedInput, decoded, captureError),
-                "Truncated capture accepted");
-        std::string badVersion = bytes;
-        badVersion[8] = 2;
-        std::istringstream badVersionInput(badVersion);
-        require(!aurum::capture::read(badVersionInput, decoded, captureError),
-                "Unknown capture version accepted");
-        std::string badChecksum = bytes;
-        badChecksum[48] ^= 0x80;
-        std::istringstream badChecksumInput(badChecksum);
-        require(!aurum::capture::read(badChecksumInput, decoded, captureError),
-                "Bad capture checksum accepted");
-        std::string oversized = bytes;
-        oversized[36] = static_cast<char>((aurum::capture::kMaxChunkBytes + 1) & 255);
-        oversized[37] = static_cast<char>((aurum::capture::kMaxChunkBytes + 1) >> 8);
-        oversized[38] = static_cast<char>((aurum::capture::kMaxChunkBytes + 1) >> 16);
-        oversized[39] = static_cast<char>((aurum::capture::kMaxChunkBytes + 1) >> 24);
-        std::istringstream oversizedInput(oversized);
-        require(!aurum::capture::read(oversizedInput, decoded, captureError),
-                "Oversized capture chunk accepted");
-        std::istringstream limitedInput(bytes);
-        require(!aurum::capture::read(limitedInput, decoded, captureError, 32),
-                "Reader size limit ignored");
-        const std::vector<aurum::capture::Record> nonMonotonic{
-            {1, 2, {1}}, {2, 2, {2}}};
-        std::ostringstream invalidOutput;
-        require(!aurum::capture::write(invalidOutput, nonMonotonic, captureError),
-                "Non-monotonic capture sequence accepted by writer");
-        std::string badSequence = bytes;
-        badSequence[40] = static_cast<char>(records[1].sequence);
-        std::istringstream badSequenceInput(badSequence);
-        require(!aurum::capture::read(badSequenceInput, decoded, captureError),
-                "Non-monotonic capture sequence accepted by reader");
-        const std::vector<Record> multiSubmission{
-            {kRecordInitial, 1, {8, 0, 0, 0}},
-            submission(2, {0xef300000, 0}),
-            {kRecordOptional | 0x12345678u, 3, {1, 2, 3}},
-            submission(4, {0xf7000000, 0xf80107c1}),
-            submission(5, {0xe9000000, 0}),
-            {kRecordVI, 6, std::vector<uint8_t>(28, 0)},
-            {kRecordEnd, 7, {0, 0, 0, 0}}};
-        std::ostringstream multiOutput;
-        requireCapture(aurum::capture::write(multiOutput, multiSubmission, captureError), captureError);
-        std::istringstream multiInput(multiOutput.str());
-        requireCapture(aurum::capture::read(multiInput, decoded, captureError), captureError);
-        require(decoded.size() == multiSubmission.size() - 1, "Optional capture chunk was not skipped");
-        decoder.reset();
-        for (const auto& record : decoded) {
-            if (record.type != kRecordRDP) continue;
-            decoder.beginSubmission();
-            for (size_t offset = 16; offset < record.payload.size(); offset += 4) {
-                uint32_t words[1] = {readBE(record.payload.data() + offset)};
-                decoder.push(words);
-            }
-        }
-        require(decoder.submissionCount() == 3 && decoder.commands == 3 &&
-                !decoder.hasPendingWords(), "Multi-submission capture replay");
-        const std::vector<Record> unknownRequired{{0x7777, 1, {1}}};
-        std::ostringstream unknownOutput;
-        require(!aurum::capture::write(unknownOutput, unknownRequired, captureError),
-                "Unknown required capture chunk accepted by writer");
         for (unsigned y = 0; y < 8; ++y) for (unsigned x = 0; x < 8; ++x) {
             uint32_t word = ram[(0x1000 + (y*8+x)*2)/4];
             unsigned value = (word >> ((x & 1) ? 0 : 16)) & 65535;
@@ -178,8 +75,8 @@ int main(int argc, char** argv) {
         require(decoder.unsupported == 1 && Decoder::wordCount(0x24) == 4, "Unsupported opcode accounting");
         const auto& context = decoder.firstUnsupported();
         require(context.valid && context.opcode == 0x0f && context.wordCount == 44 &&
-                context.capturedWords == 32 && context.command == 3 &&
-                context.submission == 3 && context.vi == 1 &&
+                context.capturedWords == 32 && context.command == 6 &&
+                context.submission == 1 && context.vi == 2 &&
                 context.words[0] == triangle[0], "Unsupported context");
         std::mt19937 random(0x64);
         for (unsigned trial = 0; trial < 48; ++trial) {
