@@ -107,6 +107,11 @@ coverage layers with a manifest. The diff tool reports the first differing
 checkpoint or byte/pixel coordinate with expected/actual values. Neither tool is
 part of `Aurum64.app`.
 
+`aurum-aurcap-replay prefix` can emit the same neutral checkpoint/RDRAM/VI-color
+format for Aurum's scalar supported-fill path. It currently lacks hidden state,
+TMEM, depth, coverage, and filtered-VI output; those remain explicit differential
+gaps rather than silently passing comparisons.
+
 ## Next milestones
 
 1. Versioned captures with memory/VI snapshots and an independently licensed

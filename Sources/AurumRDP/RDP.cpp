@@ -22,6 +22,7 @@ void Decoder::reset() {
     unsupportedContext = {};
     address = width = size = format = color = cycle = 0;
     sx0 = sy0 = sx1 = sy1 = 0;
+    haveState = false;
 }
 uint64_t Decoder::opcodeCount(uint8_t opcode) const {
     return opcode < opcodeCounts.size() ? opcodeCounts[opcode] : 0;
@@ -83,12 +84,14 @@ void Decoder::execute(std::span<const uint32_t> w) {
         sx1 = (b >> 12) & 4095; sy1 = b & 4095;
         // Field/interlace scissoring is not implemented.
         if (b & 0x03000000) markUnsupported(w);
+        haveState = true;
         break;
     case 0x2f: cycle = (a >> 20) & 3; break;
     case 0x37: color = b; break;
     case 0x3f:
         format = (a >> 21) & 7; size = (a >> 19) & 3;
         width = (a & 1023) + 1; address = b & 0x03ffffff;
+        haveState = true;
         break;
     case 0x36: {
         if (cycle != 3 || format != 0 || (size != 2 && size != 3)) {

@@ -50,6 +50,14 @@ replay = subprocess.run([str(root / ".build/native/aurum-aurcap-replay"), tests 
 assert replay.returncode == 0 and '"submissions":1' in replay.stdout and \
        '"commands":6' in replay.stdout and '"unsupported":0' in replay.stdout, replay.stderr
 print(replay.stdout, end="")
+replay_dir = tests / "replay"
+replay_dir.mkdir(exist_ok=True)
+run([root / ".build/native/aurum-aurcap-replay", tests / "fill.aurcap",
+     replay_dir / "fill"])
+scalar_counts = struct.unpack_from("<3Q", (replay_dir / "fill.counts").read_bytes())
+assert scalar_counts[0] == 320 * 240, scalar_counts
+assert (replay_dir / "fill.rdram").stat().st_size == 8 * 1024 * 1024
+assert (replay_dir / "fill.vi-color-7.rgba8").stat().st_size == 320 * 240 * 4
 reference = subprocess.run([str(root / ".build/native/aurum-angrylion-reference"),
                             tests / "fill.aurcap"], capture_output=True, text=True, timeout=30)
 if reference.returncode:

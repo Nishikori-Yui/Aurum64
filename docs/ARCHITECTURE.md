@@ -54,6 +54,13 @@ differing checkpoint, byte/pixel coordinate, and expected/actual value. Checkpoi
 hashes identify state divergence, while layer files preserve the follow-on state
 needed when shrinking a failing capture.
 
+The CPU-only `aurum-aurcap-replay` emits the same checkpoint and RDRAM/VI-color
+layer format for Aurum's supported fill path. Its current RDRAM result matches
+Angrylion on the generated fill fixture, including the submitted command bytes;
+its direct VI geometry intentionally reflects Aurum's 320x240 scanout rather
+than Angrylion's cropped 205x240 filtered view. Missing hidden/TMEM/depth/
+coverage layers are reported as unavailable by the diff tool.
+
 ## Audio and controls
 
 CXD4 executes audio microcode in LLE; the Core Audio adapter receives AI PCM DMA.

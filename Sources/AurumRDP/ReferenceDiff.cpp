@@ -83,7 +83,10 @@ std::vector<Checkpoint> checkpoints(const fs::path& prefix) {
 }
 
 std::vector<uint8_t> states(const fs::path& prefix) {
-    return read(prefix.parent_path() / (prefix.filename().string() + ".states"));
+    const fs::path path = prefix.parent_path() / (prefix.filename().string() + ".states");
+    std::error_code error;
+    if (!fs::exists(path, error)) return {};
+    return read(path);
 }
 
 std::string typeName(uint64_t type) {
@@ -153,11 +156,13 @@ int main(int argc, char** argv) {
             const char* fieldName = "event-shape";
             expectedField = expected.type;
             actualField = actual.type;
-            if (expectedStates.size() >= (i + 1) * 256 &&
-                actualStates.size() >= (i + 1) * 256) {
+            if (expected.hash != actual.hash) {
                 fieldName = "state-hash";
                 expectedField = expected.hash;
                 actualField = actual.hash;
+            }
+            if (expectedStates.size() >= (i + 1) * 256 &&
+                actualStates.size() >= (i + 1) * 256) {
                 for (unsigned word = 0; word < 64; ++word) {
                     const size_t offset = i * 256 + word * 4;
                     uint64_t expectedValue = 0, actualValue = 0;
@@ -259,13 +264,50 @@ int main(int argc, char** argv) {
 
         printHeader("match", options);
         std::printf(",\"checked\":{\"checkpoints\":%zu", expectedCheckpoints.size());
-        std::printf(",\"rdram\":true,\"hidden\":true,\"tmem\":true");
         size_t viEvents = 0;
         for (const auto& checkpoint : expectedCheckpoints) {
             if (checkpoint.type == 2) ++viEvents;
         }
-        std::printf(",\"viColor\":%zu,\"viDepth\":%zu,\"viCoverage\":%zu}}\n",
-                    viEvents, viEvents, viEvents);
+        std::printf(",\"layers\":[");
+        bool first = true;
+        for (const auto& [name, perFrame] : layers) {
+            const fs::path path = options.actualPrefix.parent_path() /
+                (options.actualPrefix.filename().string() + "." + name);
+            if (!perFrame) {
+                std::error_code error;
+                if (!fs::exists(path, error)) continue;
+                std::printf("%s\"%s\"", first ? "" : ",", name);
+                first = false;
+            } else {
+                bool present = true;
+                for (size_t i = 0; i < viEvents; ++i) {
+                    const fs::path framePath = options.actualPrefix.parent_path() /
+                        (options.actualPrefix.filename().string() + "." + name + "-" +
+                         std::to_string(i) + ".rgba8");
+                    std::error_code frameError;
+                    if (!fs::exists(framePath, frameError)) { present = false; break; }
+                }
+                if (!present) continue;
+                std::printf("%s\"%s\"", first ? "" : ",", name);
+                first = false;
+            }
+        }
+        std::printf("],\"unavailable\":[");
+        first = true;
+        for (const auto& [name, perFrame] : layers) {
+            const fs::path path = options.actualPrefix.parent_path() /
+                (options.actualPrefix.filename().string() + "." + name);
+            std::error_code layerError;
+            const bool present = perFrame
+                ? fs::exists(options.actualPrefix.parent_path() /
+                             (options.actualPrefix.filename().string() + "." + name +
+                              "-0.rgba8"), layerError)
+                : fs::exists(path, layerError);
+            if (present) continue;
+            std::printf("%s\"%s\"", first ? "" : ",", name);
+            first = false;
+        }
+        std::printf("]}\n");
         return 0;
     } catch (const std::exception& error) {
         std::printf("{\"status\":\"error\",\"message\":\"%s\"}\n", error.what());

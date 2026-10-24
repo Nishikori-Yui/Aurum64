@@ -17,6 +17,11 @@ struct UnsupportedContext {
     uint32_t words[32]{};
 };
 
+struct StateSnapshot {
+    uint32_t format = 0, size = 0, width = 0, address = 0, color = 0, cycle = 0;
+    uint32_t sx0 = 0, sy0 = 0, sx1 = 0, sy1 = 0;
+};
+
 // Commands use host-order 32-bit words, as in Mupen's word-swapped RDRAM.
 class Decoder {
 public:
@@ -33,6 +38,10 @@ public:
     uint64_t recentCommands() const { return recentCommandCount; }
     uint64_t recentUnsupported() const { return recentUnsupportedCount; }
     const UnsupportedContext& firstUnsupported() const { return unsupportedContext; }
+    StateSnapshot stateSnapshot() const {
+        return {format, size, width, address, color, cycle, sx0, sy0, sx1, sy1};
+    }
+    bool hasState() const { return haveState; }
     void beginSubmission();
     void beginVI();
     void push(std::span<const uint32_t> words);
@@ -41,6 +50,8 @@ public:
     bool hasPendingWords() const { return !pending.empty(); }
 private:
     void execute(std::span<const uint32_t> words);
+    uint32_t pendingAddress_ = 0;
+    bool haveState = false;
     std::vector<uint32_t> pending;
     std::array<uint64_t, 64> opcodeCounts{};
     std::array<uint64_t, 64> firstCommands{};
