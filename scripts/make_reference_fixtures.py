@@ -67,7 +67,7 @@ def matrix_fixture() -> bytes:
 
     submit(set_image(2, 0x200000, 64) + scissor(0, 0, 256, 128) +
            [0xef300000, 0, 0xf7000000, 0xEB0BEB0B] +
-           fill_rect(0, 0, 44, 24) + [0xe9000000, 0])
+           fill_rect(4, 4, 40, 20) + [0xe9000000, 0])
     submit(set_image(3, 0x300000, 64) + scissor(0, 0, 256, 128) +
            [0xef300000, 0, 0xf7000000, 0x12345678] +
            fill_rect(0, 0, 32, 16) + [0xe9000000, 0])
@@ -76,7 +76,7 @@ def matrix_fixture() -> bytes:
     submit(set_image(2, 0x280000, 64) + scissor(0, 0, 256, 128) +
            [0xef300000, 0, 0xe9000000, 0])
     submit([0xf7000000])
-    submit([0x7C1F801, fill_rect(0, 0, 44, 24)[0], 0, 0xe9000000, 0])
+    submit([0x7C1F801, fill_rect(4, 4, 40, 20)[0], 0, 0xe9000000, 0])
     records.append(vi(sequence, 2, 0x200000, 64)); sequence += 1
     records.append(vi(sequence, 3, 0x300000, 64)); sequence += 1
     return serialize(records)

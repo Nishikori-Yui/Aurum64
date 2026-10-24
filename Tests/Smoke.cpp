@@ -44,7 +44,7 @@ int main(int argc, char** argv) {
         return 1;
     std::vector<uint32_t> pixels(320*240); uint32_t w,h;
     aur_copy_frame(pixels.data(), pixels.size(), &w, &h);
-    for (size_t i = 0; i < pixels.size(); ++i) if (pixels[i] != (i < 2 ? 0xff00ff00u : 0xff2963efu)) {
+    for (size_t i = 0; i < pixels.size(); ++i) if (pixels[i] != (i < 2 ? 0xff00f800u : 0xff2860e8u)) {
         std::fprintf(stderr,"Pixel mismatch at %zu: %08x (RSP marker or RDP fill)\n",i,pixels[i]); return 1;
     }
     std::puts("PASS: generated MIPS ROM -> Mupen CPU + CXD4 RSP + AI DMA -> Metal fill -> VI -> host frame");

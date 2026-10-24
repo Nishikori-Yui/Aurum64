@@ -58,10 +58,10 @@ int main(int argc, char** argv) {
             uint32_t word = ram[(0x1000 + (y*8+x)*2)/4];
             const unsigned halfIndex = (0x1000 / 2) + y * 8 + x;
             const unsigned address = 0x1000 + (y * 8 + x) * 2;
-            unsigned value = (word >> ((address & 2) ? 16 : 0)) & 65535;
+            unsigned value = (word >> ((((address >> 1) ^ 1) & 1) * 16)) & 65535;
             unsigned expected = y >= 1 && y < 3 && x >= 1 && x < 5
-                                    ? ((halfIndex & 1) ? 0xf801 : 0x07c1)
-                                    : ((halfIndex & 1) ? 0x1122 : 0x3344);
+                                    ? ((halfIndex & 1) ? 0x07c1 : 0xf801)
+                                    : ((halfIndex & 1) ? 0x3344 : 0x1122);
             require(value == expected, "Metal RGBA16 masked fill mismatch");
         }
         Fill rgba32{0x2000, 4, 3, 0x12345678, 1, 0, 3, 2};
@@ -73,7 +73,7 @@ int main(int argc, char** argv) {
         require(w == 4 && h == 2 && pixels[1] == 0xff563412, "RGBA32 VI conversion mismatch");
         vi = {2, 0x1000, 8, 8, 16, 1024, 1024};
         require(renderer.scanout(reinterpret_cast<uint8_t*>(ram.data()), ram.size()*4, vi,pixels,w,h,error),error.c_str());
-        require(pixels[9] == 0xff0000f8 && pixels[10] == 0xff00f800,
+        require(pixels[9] == 0xff00f800 && pixels[10] == 0xff0000f8,
                 "RGBA5551 VI conversion mismatch");
         const uint32_t triangle[44] = {0xcf000000};
         decoder.push(std::span(triangle, 43));
@@ -99,8 +99,9 @@ int main(int argc, char** argv) {
                 if (address + bytes > expected.size() * 4) continue;
                 if (bytes == 4) expected[address / 4] = test.color;
                 else {
-                    const auto half = (test.color >> ((address & 2) ? 16 : 0)) & 65535;
-                    const auto shift = address % 4 ? 16 : 0;
+                    const uint32_t halfIndex = address >> 1;
+                    const auto half = (test.color >> ((halfIndex & 1) ? 0 : 16)) & 65535;
+                    const auto shift = ((halfIndex ^ 1) & 1) * 16;
                     expected[address / 4] = (expected[address / 4] & ~(65535u << shift)) | (half << shift);
                 }
             }

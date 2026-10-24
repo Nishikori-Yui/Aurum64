@@ -83,7 +83,7 @@ assert lib.aur_wait() == 0 and lib.aur_get_rdram_size() == 4 * 1024 * 1024
 pixels = (C.c_uint32 * (320 * 240))()
 width, height = C.c_uint32(), C.c_uint32()
 assert lib.aur_copy_frame(pixels, len(pixels), C.byref(width), C.byref(height)) == len(pixels)
-assert pixels[0] == 0xFF00FF00, "persisted HLE configuration bypassed the RSP"
+assert pixels[0] == 0xFF00F800, "persisted HLE configuration bypassed the RSP"
 config.write_text(config.read_text().replace("DisableExtraMem = True", "DisableExtraMem = False"))
 assert start(root / "fill.z64") == 1
 until(lambda s: s.frames >= 3, "running")

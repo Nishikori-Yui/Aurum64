@@ -224,8 +224,8 @@ int main(int argc, char** argv) {
                     } else {
                         const uint32_t pixelIndex = (fill.address >> 1) +
                                                     (size_t(y) * fill.width + x);
-                        const uint16_t half = uint16_t(fill.color >> ((pixelIndex & 1) ? 16 : 0));
-                        std::memcpy(output.rdram.data() + address, &half, 2);
+                        const uint16_t half = uint16_t(fill.color >> ((pixelIndex & 1) ? 0 : 16));
+                        std::memcpy(output.rdram.data() + (address ^ 2), &half, 2);
                     }
                 }
             }

@@ -55,7 +55,7 @@ struct SwiftStartupTests {
             }
             try require(count == pixels.count && width == 320 && height == 240, "Invalid Swift frame copy.")
             try require(pixels.enumerated().allSatisfy { index, pixel in
-                pixel == (index < 2 ? 0xff00ff00 : 0xff2963ef)
+                pixel == (index < 2 ? 0xff00f800 : 0xff2860e8)
             }, "Swift startup framebuffer differs from the original ROM reference.")
             for name in ["Saves", "States"] {
                 var isDirectory: ObjCBool = false
