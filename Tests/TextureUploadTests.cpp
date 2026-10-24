@@ -179,6 +179,42 @@ int main() {
                     "RGBA32 low halfword placement differs");
         }
 
+        // 8-bit texels use the same shape at byte granularity: one byte per
+        // texel, even rows reverse the bytes of each aligned word and odd rows
+        // additionally swap the two halves of the 8-byte group.
+        // The uploader reads guest byte addresses, which live at host address
+        // A ^ 3, so the source has to be laid out in guest order.
+        std::vector<uint8_t> source8(0x2000, 0);
+        for (unsigned i = 0; i < 16; ++i)
+            source8[(0x1000 + i) ^ 3] = uint8_t(0x10 + i);
+        Uploader eightBit;
+        eightBit.setTextureImage(2, 1, 8, 0x1000);
+        eightBit.setTile(0, 0, 2);
+        require(eightBit.loadTile(source8.data(), source8.size(), 0, 0, 0, 28, 4),
+                "8-bit LoadTile upload");
+        // Row 0 is even, row 1 is odd. Asserted as literal byte indices so the
+        // placement is pinned independently of the helper.
+        require(eightBit.store().readByte(3) == 0x10 &&
+                eightBit.store().readByte(2) == 0x11 &&
+                eightBit.store().readByte(7) == 0x14 &&
+                eightBit.store().readByte(6) == 0x15,
+                "8-bit row-0 byte placement differs");
+        require(eightBit.store().readByte(23) == 0x18 &&
+                eightBit.store().readByte(22) == 0x19 &&
+                eightBit.store().readByte(19) == 0x1c &&
+                eightBit.store().readByte(18) == 0x1d,
+                "8-bit row-1 byte placement differs");
+        require(Uploader::tileByteIndex(0, 2, 0, 0) == 3 &&
+                Uploader::tileByteIndex(0, 2, 0, 1) == 2 &&
+                Uploader::tileByteIndex(0, 2, 1, 0) == 23 &&
+                Uploader::tileByteIndex(0, 2, 1, 1) == 22,
+                "tileByteIndex disagrees with the reference layout");
+        // An 8-bit tile that is wider than the line stride is rejected. With
+        // line 1 a row holds eight bytes, and sh 32 asks for nine columns.
+        eightBit.setTile(0, 0, 1);
+        require(!eightBit.loadTile(source8.data(), source8.size(), 0, 0, 0, 32, 0),
+                "8-bit tile wider than the line stride accepted");
+
         // Only the verified halves of the address space are accepted. RGBA16
         // LoadTile may reach bank 1; RGBA32 LoadTile, LoadBlock and any
         // LoadBlock into bank 1 are reported unsupported instead.

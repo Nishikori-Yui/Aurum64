@@ -98,7 +98,8 @@ run([sys.executable, root / "scripts/make_reference_fixtures.py", fixtures])
 for fixture in ("matrix", "boundary4", "boundary8", "texture", "texture_stride",
                 "texture_block", "texture_tlut", "texture_rgba32",
                 "texture_rgba32_offset", "texture_memory_record",
-                "texture_memory_record_fill"):
+                "texture_memory_record_fill", "texture_ci8", "texture_ia8",
+                "texture_i8", "texture_8bit_offset"):
     fixture_reference = fixtures / f"{fixture}.ref"
     fixture_actual = fixtures / f"{fixture}.actual"
     fixture_reference.mkdir(exist_ok=True)

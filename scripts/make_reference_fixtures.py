@@ -307,6 +307,54 @@ def texture_memory_record_fill_fixture() -> bytes:
                       vi(3, 2, TEXTURE_FB, 64)])
 
 
+def texture_8bit_fixture(fmt: int) -> bytes:
+    """An 8-bit texel format uploaded with LoadTile from a memory record.
+
+    Fills cannot place an 8-bit texel exactly, so the source is written with a
+    memory record and every index is distinct. The upload layout is shared by
+    CI8, IA8 and I8 because it depends on the texture image size, not the
+    format, and each of those three is covered here.
+    """
+    width = 16
+    height = 4
+    indices = bytearray()
+    for y in range(height):
+        for x in range(width):
+            indices.append(0x10 + y * 0x10 + x)
+
+    records = [
+        initial(8 << 20),
+        memory(2, TEXTURE_SRC, bytes(indices)),
+        rdp(3, 0x100000, scissor(0, 0, width * 4, height * 4) +
+            set_texture_image(fmt, 1, width, TEXTURE_SRC) +
+            set_tile(0, fmt, 1, 2, 0) +
+            load_tile(0, 0, 0, (width - 1) << 2, (height - 1) << 2) + TEXTURE_SYNC),
+        vi(4, 2, TEXTURE_FB, 64),
+    ]
+    return serialize(records)
+
+
+def texture_8bit_offset_fixture() -> bytes:
+    """CI8 with a narrower image and a non-zero tmem base, to move the row base."""
+    width = 8
+    height = 4
+    indices = bytearray()
+    for y in range(height):
+        for x in range(width):
+            indices.append(0x10 + y * 0x10 + x)
+
+    records = [
+        initial(8 << 20),
+        memory(2, TEXTURE_SRC, bytes(indices)),
+        rdp(3, 0x100000, scissor(0, 0, width * 4, height * 4) +
+            set_texture_image(2, 1, width, TEXTURE_SRC) +
+            set_tile(0, 2, 1, 1, 3) +
+            load_tile(0, 0, 0, (width - 1) << 2, (height - 1) << 2) + TEXTURE_SYNC),
+        vi(4, 2, TEXTURE_FB, 64),
+    ]
+    return serialize(records)
+
+
 def texture_stride_fixture() -> bytes:
     """Line strides of 1 and 4, and a non-zero tmem base, for LoadTile."""
     return _texture_capture(16, 16, [
@@ -348,6 +396,10 @@ def write_all(destination: pathlib.Path) -> None:
         "texture_rgba32_offset.aurcap": texture_rgba32_offset_fixture(),
         "texture_memory_record.aurcap": texture_memory_record_fixture(),
         "texture_memory_record_fill.aurcap": texture_memory_record_fill_fixture(),
+        "texture_ci8.aurcap": texture_8bit_fixture(2),
+        "texture_ia8.aurcap": texture_8bit_fixture(3),
+        "texture_i8.aurcap": texture_8bit_fixture(4),
+        "texture_8bit_offset.aurcap": texture_8bit_offset_fixture(),
     }
     for name, data in fixtures.items():
         (destination / name).write_bytes(data)

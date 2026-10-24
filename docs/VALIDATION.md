@@ -157,3 +157,33 @@ rejected-record test fail because RDRAM keeps a partial write.
   The memory record was a prerequisite because a fill cannot place an 8-bit
   texel exactly, and the first probe at CI8 produced a source buffer that the
   replay's fill path had mislaid, so its TMEM output was not meaningful.
+
+# 8-bit texel uploads - 2026-10-24
+
+## Completed locally
+
+| Check | Actual result |
+| --- | --- |
+| CI8, IA8, I8 LoadTile | Verified against `aurum-angrylion-reference`; the upload layout is shared because it depends on the texture image size, not the format |
+| 8-bit placement rule | One byte per texel at `(tmem + line * row) << 3`, with even rows reversing the bytes of each aligned word and odd rows additionally swapping the two halves of the 8-byte group |
+| Row base movement | Covered with a non-zero `tmem` base and line strides of 1, 2 and 4 |
+| Row stride bound | A tile wider than eight bytes per line unit is rejected |
+| Byte-exact TMEM | Four fixtures report `"status":"match"` with `tmem` among the checked layers |
+| Negative control | Removing the odd-row swap fails the unit test and makes `texture_ci8` and `texture_8bit_offset` report `"status":"differ"` at TMEM bytes 16 and 32 |
+
+These fixtures depend on the capture memory record, because a fill cannot place
+an 8-bit texel exactly.
+
+## Not validated / not complete
+
+- **4-bit texels (CI4, I4):** rejected. The reference marks
+  `PIXEL_SIZE_4BIT` as a crashed pipeline and writes nothing, so there is no
+  layout to compare against. Reported as unsupported rather than approximated.
+- **8-bit LoadBlock and LoadTLUT:** rejected, neither layout is verified.
+  LoadTLUT entries are 16-bit regardless of the texel format, so the existing
+  RGBA16 TLUT path is what a CI texture would use.
+- **8-bit texel meaning:** only the upload placement is verified. How CI
+  indices combine with a TLUT, and the IA and I channel layouts, are sampling
+  concerns and are not exercised yet.
+- **YUV:** not implemented. Needs its own conversion coefficients and a
+  different `tmem_formatting` path in the reference.

@@ -17,6 +17,12 @@ namespace aurum::texture {
 // word swap. RGBA32 splits each texel across the banks, keeping the high
 // halfword in bank 0 and the low halfword in bank 1 at the same word index.
 //
+// 8-bit texels use the same shape at byte granularity: a byte index is
+// (tmem + line * row) << 3, odd rows swap the whole 8-byte group and even
+// rows reverse the bytes within each aligned word. That layout is shared by
+// CI8, IA8 and I8, which were each verified against the reference, because
+// the upload path depends on the texture image size rather than its format.
+//
 // Deliberate divergence from the reference: an out-of-range or misaligned
 // source address is rejected with false instead of being masked into RDRAM
 // and read as zero the way rdram_read_idx32() does. The plan requires invalid
@@ -27,6 +33,7 @@ public:
     static constexpr uint32_t kTmemUnits = 512;      // 9-bit tmem field
     static constexpr uint32_t kTmemWords16 = 2048;   // 4 KiB of halfwords
     static constexpr uint32_t kBankWords16 = 1024;
+    static constexpr uint32_t kTmemBytes = 4096;
 
     void setTextureImage(uint32_t format, uint32_t size, uint32_t width,
                          uint32_t address) {
@@ -53,18 +60,30 @@ public:
         // The hardware word index is 11 bits wide and spans both banks, so
         // RGBA16 may reach the last of 2048 words. RGBA32 also writes the
         // same index plus one bank, which has to stay inside that window.
+        // 8-bit texels use byte indices over the same 4 KiB, so the row base
+        // is measured in 8-byte units instead of words.
         // 64-bit: a wide extent must not wrap past the TMEM window.
         const uint64_t lastRow = uint64_t(destination) + line * (rows - 1);
-        const uint64_t lastWord = (lastRow << 2) + columns;
-        const uint64_t limit = tiSize == 3 ? kBankWords16 : kTmemWords16;
-        if (!line || columns > line * 4 || lastRow >= kTmemUnits ||
-            lastWord > limit)
-            return false;
+        if (!line || lastRow >= kTmemUnits) return false;
+        if (tiSize == 1) {
+            if (columns > line * 8 || (lastRow << 3) + columns > kTmemBytes)
+                return false;
+        } else {
+            const uint64_t lastWord = (lastRow << 2) + columns;
+            const uint64_t limit = tiSize == 3 ? kBankWords16 : kTmemWords16;
+            if (columns > line * 4 || lastWord > limit) return false;
+        }
         if (!sourceReadsValid(columns, rows, sl >> 2, tl >> 2, rdramBytes))
             return false;
         const uint32_t x0 = sl >> 2, y0 = tl >> 2;
         for (uint32_t row = 0; row < rows; ++row) {
             for (uint32_t column = 0; column < columns; ++column) {
+                if (tiSize == 1) {
+                    tmem.writeByte(tileByteIndex(destination, line, row, column),
+                                   readSourceByte(rdram, rdramBytes,
+                                                  x0 + column, y0 + row));
+                    continue;
+                }
                 const uint32_t index =
                     tileWordIndex(destination, line, row, column);
                 if (tiSize == 3) {
@@ -141,8 +160,17 @@ public:
         return (base + column) ^ ((row & 1) ? 3u : 1u);
     }
 
+    // The same placement at byte granularity, for 8-bit texels.
+    static uint32_t tileByteIndex(uint32_t tmem, uint32_t line, uint32_t row,
+                                  uint32_t column) {
+        const uint32_t base = ((tmem + line * row) & 0x1ff) << 3;
+        return (base + column) ^ ((row & 1) ? 7u : 3u);
+    }
+
 private:
-    bool supportedSize() const { return tiSize == 2 || tiSize == 3; }
+    bool supportedSize() const { return tiSize == 1 || tiSize == 2 || tiSize == 3; }
+
+    uint32_t texelBytes() const { return tiSize == 3 ? 4 : (tiSize == 1 ? 1 : 2); }
 
     bool decodeRect(const uint8_t* rdram, uint32_t tile, uint32_t sl,
                     uint32_t tl, uint32_t sh, uint32_t th, uint32_t& columns,
@@ -172,7 +200,7 @@ private:
     // Guest address of one texel, or npos when it overflows 32 bits.
     size_t sourceAddress(uint32_t x, uint32_t y) const {
         const uint64_t address = uint64_t(tiAddress) +
-            (uint64_t(y) * tiWidth + x) * (tiSize == 3 ? 4 : 2);
+            (uint64_t(y) * tiWidth + x) * texelBytes();
         return address > UINT32_MAX ? npos : size_t(address);
     }
 
@@ -182,6 +210,10 @@ private:
         if (tiSize == 3) {
             const size_t host = aurum::memory::hostWordAddress(uint32_t(address));
             return host + sizeof(uint32_t) <= rdramBytes;
+        }
+        if (tiSize == 1) {
+            const size_t host = aurum::memory::hostByteAddress(uint32_t(address));
+            return host < rdramBytes;
         }
         const size_t host =
             aurum::memory::hostHalfwordAddress(uint32_t(address));
@@ -195,6 +227,12 @@ private:
         aurum::memory::readHalfword(rdram, rdramBytes,
                                     uint32_t(sourceAddress(x, y)), value);
         return value;
+    }
+
+    uint8_t readSourceByte(const uint8_t* rdram, size_t rdramBytes,
+                           uint32_t x, uint32_t y) const {
+        return rdram[aurum::memory::hostByteAddress(
+            uint32_t(sourceAddress(x, y)))];
     }
 
     uint32_t readSourceWord(const uint8_t* rdram, size_t rdramBytes,
