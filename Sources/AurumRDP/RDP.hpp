@@ -18,8 +18,11 @@ struct UnsupportedContext {
 };
 
 struct StateSnapshot {
-    uint32_t format = 0, size = 0, width = 0, address = 0, color = 0, cycle = 0;
-    uint32_t sx0 = 0, sy0 = 0, sx1 = 0, sy1 = 0;
+    uint32_t fbFormat = 0, fbSize = 0, fbWidth = 0, fbAddress = 0, fillColor = 0;
+    uint32_t clipXh = 0, clipYh = 0, clipXl = 0, clipYl = 0, cycleType = 0;
+    uint32_t imageReadEn = 0, zUpdateEn = 0, zCompareEn = 0;
+    uint32_t tiFormat = 0, tiSize = 0, tiWidth = 0, tiAddress = 0, zbAddress = 0;
+    std::array<uint32_t, 32> tiles{};
 };
 
 // Commands use host-order 32-bit words, as in Mupen's word-swapped RDRAM.
@@ -39,7 +42,15 @@ public:
     uint64_t recentUnsupported() const { return recentUnsupportedCount; }
     const UnsupportedContext& firstUnsupported() const { return unsupportedContext; }
     StateSnapshot stateSnapshot() const {
-        return {format, size, width, address, color, cycle, sx0, sy0, sx1, sy1};
+        StateSnapshot state;
+        state.fbFormat = format; state.fbSize = size; state.fbWidth = width;
+        state.fbAddress = address; state.fillColor = color;
+        state.clipXh = sx0; state.clipYh = sy0; state.clipXl = sx1; state.clipYl = sy1;
+        state.cycleType = cycle; state.imageReadEn = imageReadEn;
+        state.zUpdateEn = zUpdateEn; state.zCompareEn = zCompareEn;
+        state.tiFormat = tiFormat; state.tiSize = tiSize; state.tiWidth = tiWidth;
+        state.tiAddress = tiAddress; state.zbAddress = zbAddress; state.tiles = tiles;
+        return state;
     }
     bool hasState() const { return haveState; }
     void beginSubmission();
@@ -62,6 +73,9 @@ private:
     uint64_t recentCommandCount = 0, recentUnsupportedCount = 0;
     UnsupportedContext unsupportedContext{};
     uint32_t address = 0, width = 0, size = 0, format = 0, color = 0, cycle = 0;
+    uint32_t imageReadEn = 0, zUpdateEn = 0, zCompareEn = 0;
+    uint32_t tiFormat = 0, tiSize = 0, tiWidth = 0, tiAddress = 0, zbAddress = 0;
+    std::array<uint32_t, 32> tiles{};
     uint32_t sx0 = 0, sy0 = 0, sx1 = 0, sy1 = 0;
     void markUnsupported(std::span<const uint32_t> words);
 };

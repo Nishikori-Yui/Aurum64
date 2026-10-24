@@ -63,9 +63,12 @@ struct Replay {
             std::memcpy(summary + offset, &value, 4);
             offset += 4;
         };
-        put(state.format); put(state.size); put(state.width); put(state.address);
-        put(state.color); put(state.sx0); put(state.sy0); put(state.sx1); put(state.sy1);
-        put(state.cycle);
+        put(state.fbFormat); put(state.fbSize); put(state.fbWidth); put(state.fbAddress);
+        put(state.fillColor); put(state.clipXh); put(state.clipYh); put(state.clipXl);
+        put(state.clipYl); put(state.cycleType); put(state.imageReadEn);
+        put(state.zUpdateEn); put(state.zCompareEn); put(state.tiFormat);
+        put(state.tiSize); put(state.tiWidth); put(state.tiAddress); put(state.zbAddress);
+        for (uint32_t tile : state.tiles) put(tile);
         lastStateHash = fnv1a64(summary, sizeof(summary));
         states.insert(states.end(), summary, summary + sizeof(summary));
         checkpoints.push_back({1, record, decoder.submissionCount(), decoder.commands, 0,

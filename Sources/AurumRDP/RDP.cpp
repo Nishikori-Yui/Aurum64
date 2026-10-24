@@ -30,6 +30,9 @@ void Decoder::reset() {
     recentCommandCount = recentUnsupportedCount = 0;
     unsupportedContext = {};
     address = width = size = format = color = cycle = 0;
+    imageReadEn = zUpdateEn = zCompareEn = 0;
+    tiFormat = tiSize = tiWidth = tiAddress = zbAddress = 0;
+    tiles.fill(0);
     sx0 = sy0 = sx1 = sy1 = 0;
     haveState = false;
 }
@@ -95,8 +98,31 @@ void Decoder::execute(std::span<const uint32_t> w) {
         if (b & 0x03000000) markUnsupported(w);
         haveState = true;
         break;
-    case 0x2f: cycle = (a >> 20) & 3; break;
+    case 0x2f:
+        cycle = (a >> 20) & 3;
+        imageReadEn = (b >> 6) & 1;
+        zUpdateEn = (b >> 5) & 1;
+        zCompareEn = (b >> 4) & 1;
+        break;
+    case 0x32:
+    case 0x33:
+    case 0x34:
+    case 0x35: {
+        const uint32_t tile = (b >> 24) & 7;
+        if (opcode == 0x35) {
+            tiles[tile * 4 + 0] = (a >> 21) & 7;
+            tiles[tile * 4 + 1] = (a >> 19) & 3;
+            tiles[tile * 4 + 2] = (a >> 9) & 0x1ff;
+            tiles[tile * 4 + 3] = a & 0x1ff;
+        }
+        break;
+    }
     case 0x37: color = b; break;
+    case 0x3d:
+        tiFormat = (a >> 21) & 7; tiSize = (a >> 19) & 3;
+        tiWidth = (a & 0x3ff) + 1; tiAddress = b & 0x0ffffff;
+        break;
+    case 0x3e: zbAddress = b & 0x0ffffff; break;
     case 0x3f:
         format = (a >> 21) & 7; size = (a >> 19) & 3;
         width = (a & 1023) + 1; address = b & 0x03ffffff;

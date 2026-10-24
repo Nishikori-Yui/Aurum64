@@ -51,7 +51,7 @@ int main(int argc, char** argv) {
         const uint32_t noOpStream[] = {0, 0, 0xff100040, 0x40};
         for (auto& word : noOpStream) decoder.push(std::span(&word, 1));
         require(decoder.commands == 8 && decoder.opcodeCount(0x00) == 1 &&
-                decoder.stateSnapshot().width == 65,
+                decoder.stateSnapshot().fbWidth == 65,
                 "No-op command boundary");
         require(decoder.unsupported == 0, "Supported fill stream marked unsupported");
         for (unsigned y = 0; y < 8; ++y) for (unsigned x = 0; x < 8; ++x) {
@@ -107,6 +107,23 @@ int main(int argc, char** argv) {
         }
         require(!decoder.hasPendingWords() && decoder.commands == 64,
                 "All RDP opcode boundaries");
+        decoder.reset();
+        decoder.beginSubmission();
+        const uint32_t stateCommands[] = {
+            0xfd000000 | (1 << 21) | (2 << 19) | 16, 0x0123456,
+            0xfe000000, 0x00345678,
+            0xef300000, 0x00000070,
+            0x35000000 | (3 << 21) | (2 << 19) | (17 << 9) | 0x88, 3 << 24
+        };
+        decoder.push(stateCommands);
+        const auto state = decoder.stateSnapshot();
+        require(state.tiFormat == 1 && state.tiSize == 2 && state.tiWidth == 17 &&
+                state.tiAddress == 0x123456 && state.zbAddress == 0x345678 &&
+                state.cycleType == 3 && state.imageReadEn == 1 &&
+                state.zUpdateEn == 1 && state.zCompareEn == 1 &&
+                state.tiles[12] == 3 && state.tiles[13] == 2 &&
+                state.tiles[14] == 17 && state.tiles[15] == 0x88,
+                "RDP state snapshot fields");
         std::mt19937 random(0x64);
         for (unsigned trial = 0; trial < 48; ++trial) {
             std::vector<uint32_t> actual(16384), expected;
