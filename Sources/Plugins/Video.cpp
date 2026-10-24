@@ -125,21 +125,23 @@ EXPORT void CALL ProcessRDPList() {
     const uint32_t start = current;
     const uint32_t end = *info.DPC_END_REG & 0x00fffff8;
     const bool xbus = *info.DPC_STATUS_REG & 1;
-    if (end < current || end - current > memorySize()) { aur_fail("Invalid RDP command range."); return; }
+    const uint32_t busLimit = xbus ? 4096u : memorySize();
+    if (end < current || end - current > busLimit) { aur_fail("Invalid RDP command range."); return; }
     decoder.beginSubmission();
-    for (; current < end; current += 8) {
+    while (current < end) {
         uint32_t words[2];
-        for (unsigned i = 0; i < 2; ++i) {
-            uint32_t address = current + i * 4;
-            if (xbus) std::memcpy(&words[i], info.DMEM + (address & 4095), 4);
+        unsigned count = 0;
+        for (; count < 2 && current < end; ++count, current += 4) {
+            const uint32_t address = current;
+            if (xbus) std::memcpy(&words[count], info.DMEM + (address & 4095), 4);
             else {
                 if (address + 4 > memorySize()) { aur_fail("RDP command exceeds RDRAM."); return; }
-                std::memcpy(&words[i], info.RDRAM + address, 4);
+                std::memcpy(&words[count], info.RDRAM + address, 4);
             }
             // Trace format is network-order words, independent of the host's endianness.
-            if (trace) { uint32_t be = __builtin_bswap32(words[i]); trace.write(reinterpret_cast<char*>(&be), 4); }
+            if (trace) { uint32_t be = __builtin_bswap32(words[count]); trace.write(reinterpret_cast<char*>(&be), 4); }
         }
-        decoder.push(words);
+        decoder.push(std::span(words, count));
     }
     if (!capturePath.empty()) {
         std::vector<uint8_t> payload;
