@@ -4,6 +4,7 @@
 #include "RDP.hpp"
 #include "TextureUpload.hpp"
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -258,6 +259,11 @@ int main(int argc, char** argv) {
         replay(decoder, output, records);
         if (emitLayers) {
             write(prefix, ".rdram", output.rdram.data(), output.rdram.size());
+            // TMEM in hardware byte layout so it is directly comparable with
+            // the reference layer of the same name.
+            std::array<uint8_t, 0x1000> tmemBytes{};
+            output.textures.store().copyBytes(tmemBytes);
+            write(prefix, ".tmem", tmemBytes.data(), tmemBytes.size());
             std::vector<uint8_t> counts, geometryBytes, checkpointBytes;
             for (size_t i = 0; i < output.color.size(); ++i) {
                 appendLE(counts, uint64_t(output.color[i].size()));
@@ -290,6 +296,7 @@ int main(int argc, char** argv) {
             manifest << "format=aurum-reference-layers/1\n"
                         "engine=aurum-scalar-replay\n"
                         "rdram=host-word-swapped:N64ByteAddress:whole\n"
+                        "tmem=4096:hardware-byte-layout\n"
                         "vi-color=RGBA8:R,G,B,A little-endian\n"
                         "counts=little-endian-uint64-triples:color-depth-coverage\n"
                         "geometry=little-endian-uint32-pairs:width-height-per-vi\n"

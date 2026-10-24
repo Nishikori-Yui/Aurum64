@@ -34,6 +34,31 @@ def vi(sequence: int, kind: int, origin: int, width: int) -> bytes:
     return chunk(4, sequence, struct.pack("<7I", *registers))
 
 
+def set_texture_image(fmt: int, size: int, width: int, address: int) -> list[int]:
+    """Opcode 0x3d. Width is stored as width-1."""
+    return [0xfd000000 | fmt << 21 | size << 19 | (width - 1), address]
+
+
+def set_tile(tile: int, fmt: int, size: int, line: int, tmem: int) -> list[int]:
+    """Opcode 0x35. line and tmem count 8-byte TMEM units."""
+    return [0xf5000000 | fmt << 21 | size << 19 | line << 9 | tmem, tile << 24]
+
+
+def load_tile(tile: int, sl: int, tl: int, sh: int, th: int) -> list[int]:
+    """Opcode 0x34. Coordinates are 10.2 fixed point, inclusive."""
+    return [0xf4000000 | sl << 12 | tl, tile << 24 | sh << 12 | th]
+
+
+def load_block(tile: int, sl: int, tl: int, sh: int, dxt: int) -> list[int]:
+    """Opcode 0x33."""
+    return [0xf3000000 | sl << 12 | tl, tile << 24 | sh << 12 | dxt]
+
+
+def load_tlut(tile: int, sl: int, tl: int, sh: int, th: int) -> list[int]:
+    """Opcode 0x30."""
+    return [0xf0000000 | sl << 12 | tl, tile << 24 | sh << 12 | th]
+
+
 def set_image(kind: int, address: int, width: int) -> list[int]:
     size = 2 if kind == 2 else 3
     return [0xff000000 | size << 19 | (width - 1), address]
@@ -95,12 +120,99 @@ def boundary_fixture(memory: int) -> bytes:
     return serialize(records)
 
 
+TEXTURE_SRC = 0x200000
+TEXTURE_FB = 0x300000
+TEXTURE_SYNC = [0xe9000000, 0]
+
+
+def _texture_seed(width: int, height: int) -> list[int]:
+    """Fill the texture source so every texel holds a distinct RGBA16 value.
+
+    A distinct value per texel is what makes an addressing error show up as a
+    differing byte instead of a plausible-looking tile.
+    """
+    words = scissor(0, 0, width * 4, height * 4) + [0xef300000, 0]
+    for y in range(height):
+        for x in range(width):
+            value = 0x1000 + y * 0x100 + x
+            words += set_image(2, TEXTURE_SRC, width) + [0xf7000000, value << 16 | value]
+            words += [0xf6000000 | (x * 4 + 3) << 12 | (y * 4 + 3),
+                      (x * 4) << 12 | (y * 4)]
+    return words + TEXTURE_SYNC
+
+
+def _texture_capture(width: int, height: int, uploads: list[list[int]]) -> bytes:
+    """Build a capture that seeds the source, then applies each upload."""
+    records = [initial(8 << 20)]
+    sequence = 2
+    bases = iter(range(0x100000, 0x100000 + 0x100 * 16, 0x100))
+
+    def submit(words: list[int]) -> None:
+        nonlocal sequence
+        records.append(rdp(sequence, next(bases), words))
+        sequence += 1
+
+    submit(_texture_seed(width, height))
+    submit(set_texture_image(0, 2, width, TEXTURE_SRC) + uploads[0])
+    for upload in uploads[1:]:
+        submit(upload)
+
+    records.append(vi(sequence, 2, TEXTURE_FB, 64))
+    sequence += 1
+    return serialize(records)
+
+
+def texture_fixture() -> bytes:
+    """RGBA16 uploads exercising the TMEM addressing rules.
+
+    Covers LoadTile with a non-zero tmem base and the odd-row dword swap,
+    LoadTile reaching TMEM bank 1, LoadBlock with dxt=0, and LoadTLUT.
+    """
+    return _texture_capture(16, 16, [
+        set_tile(0, 0, 2, 2, 1) + load_tile(0, 0, 0, 7 << 2, 7 << 2) + TEXTURE_SYNC,
+        set_tile(1, 0, 2, 2, 256) + load_tile(1, 0, 0, 3 << 2, 3 << 2) + TEXTURE_SYNC,
+        set_tile(2, 0, 2, 2, 8) + load_block(2, 0, 0, 12, 0) + TEXTURE_SYNC,
+        set_tile(3, 0, 2, 2, 0) + load_tlut(3, 0, 0, 20, 0) + TEXTURE_SYNC,
+    ])
+
+
+def texture_stride_fixture() -> bytes:
+    """Line strides of 1 and 4, and a non-zero tmem base, for LoadTile."""
+    return _texture_capture(16, 16, [
+        set_tile(0, 0, 2, 1, 0) + load_tile(0, 0, 0, 3 << 2, 7 << 2) + TEXTURE_SYNC,
+        set_tile(1, 0, 2, 4, 0) + load_tile(1, 0, 0, 3 << 2, 7 << 2) + TEXTURE_SYNC,
+        set_tile(2, 0, 2, 2, 3) + load_tile(2, 0, 0, 3 << 2, 7 << 2) + TEXTURE_SYNC,
+    ])
+
+
+def texture_block_fixture() -> bytes:
+    """LoadBlock with dxt=0 at several sh values, one 64-bit step each four."""
+    return _texture_capture(16, 16, [
+        set_tile(0, 0, 2, 2, 0) + load_block(0, 0, 0, 4, 0) + TEXTURE_SYNC,
+        set_tile(1, 0, 2, 2, 0) + load_block(1, 0, 0, 44, 0) + TEXTURE_SYNC,
+        set_tile(2, 0, 2, 2, 1) + load_block(2, 0, 0, 12, 0) + TEXTURE_SYNC,
+    ])
+
+
+def texture_tlut_fixture() -> bytes:
+    """Single-row LoadTLUT at 4 and 7 entries, plus a non-zero tmem base."""
+    return _texture_capture(16, 16, [
+        set_tile(0, 0, 2, 2, 0) + load_tlut(0, 0, 0, 12, 0) + TEXTURE_SYNC,
+        set_tile(1, 0, 2, 2, 0) + load_tlut(1, 0, 0, 28, 0) + TEXTURE_SYNC,
+        set_tile(2, 0, 2, 2, 5) + load_tlut(2, 0, 0, 12, 0) + TEXTURE_SYNC,
+    ])
+
+
 def write_all(destination: pathlib.Path) -> None:
     destination.mkdir(parents=True, exist_ok=True)
     fixtures = {
         "matrix.aurcap": matrix_fixture(),
         "boundary4.aurcap": boundary_fixture(4 << 20),
         "boundary8.aurcap": boundary_fixture(8 << 20),
+        "texture.aurcap": texture_fixture(),
+        "texture_stride.aurcap": texture_stride_fixture(),
+        "texture_block.aurcap": texture_block_fixture(),
+        "texture_tlut.aurcap": texture_tlut_fixture(),
     }
     for name, data in fixtures.items():
         (destination / name).write_bytes(data)

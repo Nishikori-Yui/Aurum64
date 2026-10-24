@@ -95,7 +95,8 @@ run([root / ".build/native/aurum-reference-diff", reference_dir / "fill",
      replay_dir / "fill", tests / "fill.aurcap"])
 fixtures = tests / "fixtures"
 run([sys.executable, root / "scripts/make_reference_fixtures.py", fixtures])
-for fixture in ("matrix", "boundary4", "boundary8"):
+for fixture in ("matrix", "boundary4", "boundary8", "texture", "texture_stride",
+                "texture_block", "texture_tlut"):
     fixture_reference = fixtures / f"{fixture}.ref"
     fixture_actual = fixtures / f"{fixture}.actual"
     fixture_reference.mkdir(exist_ok=True)
