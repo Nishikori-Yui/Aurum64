@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "Capture.hpp"
+#include "MemoryBus.hpp"
 #include "RDP.hpp"
 #include <algorithm>
 #include <cstdint>
@@ -115,15 +116,18 @@ struct Replay {
                 const size_t address = ((vi[1] & 0xffffffu) & ~(bytes - 1)) +
                                        (size_t(sourceY) * vi[2] + sourceX) * bytes;
                 if (address + bytes > rdram.size()) continue;
-                uint32_t word;
-                std::memcpy(&word, rdram.data() + (address & ~3u), 4);
                 if (bytes == 2) {
-                    const uint32_t value = (word >> ((address & 2) ? 0 : 16)) & 65535;
+                    uint16_t value = 0;
+                    if (!aurum::memory::readHalfword(rdram.data(), rdram.size(), address, value))
+                        continue;
                     const uint32_t r = (value >> 8) & 0xf8;
                     const uint32_t g = (value & 0x7c0) >> 3;
                     const uint32_t b = (value & 0x3e) << 2;
                     pixels[size_t(y) * outWidth + x] = r | (g << 8) | (b << 16);
                 } else {
+                    uint32_t word = 0;
+                    if (!aurum::memory::readWord(rdram.data(), rdram.size(), address, word))
+                        continue;
                     uint32_t r = word >> 24, g = word >> 16 & 255, b = word >> 8 & 255;
                     pixels[size_t(y) * outWidth + x] = r | (g << 8) | (b << 16);
                 }
@@ -156,7 +160,9 @@ void replay(aurum::rdp::Decoder& decoder, Replay& output,
                 record.payload.size() >= 16 + (end - start)) {
                 for (uint32_t address = start; address < end; address += 4) {
                     const uint32_t word = readBE(record.payload.data() + 16 + (address - start));
-                    std::memcpy(output.rdram.data() + address, &word, 4);
+                    require(aurum::memory::writeWord(output.rdram.data(), output.rdram.size(),
+                                                     address, word),
+                            "RDRAM command write is outside memory.");
                 }
             }
             output.stateCheckpoint(decoder, record.sequence);
@@ -218,7 +224,9 @@ int main(int argc, char** argv) {
                         const uint32_t pixelIndex = (fill.address >> 1) +
                                                     (size_t(y) * fill.width + x);
                         const uint16_t half = uint16_t(fill.color >> ((pixelIndex & 1) ? 0 : 16));
-                        std::memcpy(output.rdram.data() + (address ^ 2), &half, 2);
+                        require(aurum::memory::writeHalfword(output.rdram.data(),
+                                                             output.rdram.size(), address, half),
+                                "RDRAM fill write is outside memory.");
                     }
                 }
             }
