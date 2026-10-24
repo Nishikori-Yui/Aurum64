@@ -1,6 +1,6 @@
 # Dependencies and source provenance
 
-Checked on 2026-10-23. Build inputs are submodule commits, not floating branches.
+Checked on 2026-10-24. Build inputs are submodule commits, not floating branches.
 
 | Component | Source / pin | License | Use |
 | --- | --- | --- | --- |
@@ -40,21 +40,44 @@ A release must provide corresponding source, including upstream components,
 build scripts and any modifications, alongside its binaries. Ad-hoc signing is
 for local testing, not Developer ID signing/notarization or an App Store release.
 
+## M2 software-reference audit
+
+The M2 accuracy investigation was completed on 2026-10-24 before copying any
+candidate source. Candidate repositories were inspected in temporary checkouts;
+no code from this audit is present in the application or its build inputs yet.
+
+| Candidate | Exact pin | License finding | macOS ARM64 result | Decision |
+| --- | --- | --- | --- | --- |
+| [angrylion-rdp-plus](https://github.com/ata4/angrylion-rdp-plus) | `9c8b9ed3e7d7f00dff8bc872ccdd3fba1a3673fc` | `src/core`, `src/output`, and their headers are covered by the repository's `MAME License.txt`; `CREDITS.txt` attributes the original RDP to angrylion/MESS contributors. The separate Mupen64Plus plugin layer carries GPL-2.0 headers. | Configured and built with `-DBUILD_MUPEN64PLUS=OFF -DBUILD_PROJECT64=OFF -DCMAKE_OSX_ARCHITECTURES=arm64`. Both static libraries were arm64; no source patch was needed. CMake still discovers OpenGL because the output library is part of the project, but the RDP/VI core has no emulator plugin dependency. One existing `-Wswitch` warning appeared. | Selected M2 software reference. Use `src/core` behind an original adapter and keep the Mupen64Plus plugin sources out of the build. |
+| Themaister's older Angrylion fork | `31bdb1f0a79dd726017a38432540c6b5db0fa117` (pinned by paraLLEl-RDP) | Same MAME license and credits; this predates the core/output split. | Modern CMake rejects its `cmake_minimum_required(VERSION 2.8)`. With `-DCMAKE_POLICY_VERSION_MINIMUM=3.5` and arm64 settings, `libalp-core.a` built without changing source. The project also unconditionally builds its Mupen64Plus plugin and needs OpenGL. | Do not integrate. Retain only as the exact Angrylion version used by paraLLEl's comparison tooling. |
+| [paraLLEl-RDP](https://github.com/Themaister/parallel-rdp) | `1cecd042b2619bc505c12bfdc713808386f2b54d` | Root and RDP implementation files are MIT. Pinned Granite submodule `cf71dee71fb00110749a9a3fcbd87b0297e49b6a` is MIT; the pinned Angrylion submodule above is MAME-licensed; bundled Vulkan profiles are Apache-2.0. | Not built in this milestone: its runner is Vulkan compute, so macOS requires an external Vulkan/MoltenVK runtime and a substantially larger dependency surface. | Secondary architecture and conformance-design reference. Any future executable must stay isolated from the production app. |
+| [ares](https://github.com/ares-emulator/ares) | `c76aaffa6e69778baf9a66d1da04298ac2ed7d1d` | Composite licensing; the relevant N64 subsystem requires file-by-file review rather than applying one project-wide label. | Not built for this audit. | Optional cross-reference only. Re-audit exact files before any use. |
+| [Orbit64](https://github.com/Wronk4/orbit64) | `93879b6a642ab321b1ad9f25646412193e29aeb2` | No LICENSE/COPYING/NOTICE file and GitHub reports no recognized license at this pin. | Not applicable. | Do not copy or link until an applicable license is established. |
+
+The selected reference will remain a development-only, offline process. Its
+MAME license forbids commercial distribution, so it must not be bundled with a
+production `.app` or marketed as a product feature. A distributed development
+build must provide the pinned upstream source, all local modifications, and the
+upstream MAME notice; original adapter code cannot be labeled MIT on behalf of
+upstream files. Reference output files are test data generated from original
+ROMs and do not redistribute upstream source.
+
 ## Evaluated alternatives
 
-- [paraLLEl-RDP](https://github.com/Themaister/parallel-rdp): MIT, Vulkan compute;
-  upstream describes comparison against Angrylion-Plus. Appropriate architecture
-  reference and future differential-test target. No Vulkan/MoltenVK dependency
-  or direct source port in this milestone.
-- [Orbit64](https://github.com/Wronk4/orbit64): repository has no top-level LICENSE
-  at inspection; GitHub license metadata is empty. Do not copy implementation
-  without establishing a clear applicable license. Metal accuracy was not tested.
-- [ares](https://github.com/ares-emulator/ares): active multi-system architecture;
-  ISC main code with a composite third-party LICENSE. Valuable accuracy reference,
-  but a larger integration surface than Mupen's established plugin ABI.
+- [paraLLEl-RDP](https://github.com/Themaister/parallel-rdp): MIT/Vulkan compute
+  with MIT Granite and MAME Angrylion submodules; see the exact pins above.
+  Appropriate architecture reference and future differential-test target. No
+  Vulkan/MoltenVK dependency or direct source port in this milestone.
+- [Orbit64](https://github.com/Wronk4/orbit64): no applicable license was found
+  at the inspected pin. Do not copy implementation without establishing a clear
+  license. Metal accuracy was not tested.
+- [ares](https://github.com/ares-emulator/ares): active multi-system architecture
+  with composite third-party licensing. Valuable accuracy cross-reference, but a
+  larger integration surface than the selected standalone core.
 - [simple64](https://github.com/simple64/simple64): GPL-3.0 project, useful LLE /
   paraLLEl integration reference. Not selected as a UI or binary dependency.
 
-API metadata observed core pushed 2026-10-21, ares 2026-10-22, Orbit64 2026-10-14,
-simple64 2025-02-14 and paraLLEl-RDP 2024-11-09. These timestamps indicate repository
-activity only, not correctness, support guarantees or emulator compatibility.
+Repository activity observed 2026-10-24: core 2026-10-21, ares 2026-10-22,
+Orbit64 2026-10-14, simple64 2025-02-14, paraLLEl-RDP 2024-11-09, and
+angrylion-rdp-plus 2025-01-05. These timestamps indicate repository activity
+only, not correctness, support guarantees or emulator compatibility.
