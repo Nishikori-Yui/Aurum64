@@ -113,6 +113,7 @@ int main(int argc, char** argv) {
             0xfd000000 | (1 << 21) | (2 << 19) | 16, 0x0123456,
             0xfe000000, 0x00345678,
             0xef300000, 0x00000070,
+            0xf2000000 | (12 << 12) | 20, (3 << 24) | (28 << 12) | 36,
             0x35000000 | (3 << 21) | (2 << 19) | (17 << 9) | 0x88, 3 << 24
         };
         decoder.push(stateCommands);
@@ -124,6 +125,9 @@ int main(int argc, char** argv) {
                 state.tiles[12] == 3 && state.tiles[13] == 2 &&
                 state.tiles[14] == 17 && state.tiles[15] == 0x88,
                 "RDP state snapshot fields");
+        require(decoder.tileSizes()[12] == 12 && decoder.tileSizes()[13] == 20 &&
+                decoder.tileSizes()[14] == 28 && decoder.tileSizes()[15] == 36,
+                "RDP tile size state");
         const auto encodedState = state.words();
         const auto decodedState = StateSnapshot::fromWords(encodedState);
         require(encodedState[63] == StateSnapshot::kVersion &&

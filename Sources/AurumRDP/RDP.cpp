@@ -57,6 +57,7 @@ void Decoder::reset() {
     imageReadEn = zUpdateEn = zCompareEn = 0;
     tiFormat = tiSize = tiWidth = tiAddress = zbAddress = 0;
     tiles.fill(0);
+    tileSizes_.fill(0);
     sx0 = sy0 = sx1 = sy1 = 0;
     haveState = false;
 }
@@ -128,7 +129,14 @@ void Decoder::execute(std::span<const uint32_t> w) {
         zUpdateEn = (b >> 5) & 1;
         zCompareEn = (b >> 4) & 1;
         break;
-    case 0x32:
+    case 0x32: {
+        const uint32_t tile = (b >> 24) & 7;
+        tileSizes_[tile * 4 + 0] = (a >> 12) & 0xfff;
+        tileSizes_[tile * 4 + 1] = a & 0xfff;
+        tileSizes_[tile * 4 + 2] = (b >> 12) & 0xfff;
+        tileSizes_[tile * 4 + 3] = b & 0xfff;
+        break;
+    }
     case 0x33:
     case 0x34:
     case 0x35: {

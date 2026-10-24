@@ -44,6 +44,7 @@ public:
     uint64_t recentCommands() const { return recentCommandCount; }
     uint64_t recentUnsupported() const { return recentUnsupportedCount; }
     const UnsupportedContext& firstUnsupported() const { return unsupportedContext; }
+    const std::array<uint32_t, 32>& tileSizes() const { return tileSizes_; }
     StateSnapshot stateSnapshot() const {
         StateSnapshot state;
         state.fbFormat = format; state.fbSize = size; state.fbWidth = width;
@@ -79,6 +80,7 @@ private:
     uint32_t imageReadEn = 0, zUpdateEn = 0, zCompareEn = 0;
     uint32_t tiFormat = 0, tiSize = 0, tiWidth = 0, tiAddress = 0, zbAddress = 0;
     std::array<uint32_t, 32> tiles{};
+    std::array<uint32_t, 32> tileSizes_{};
     uint32_t sx0 = 0, sy0 = 0, sx1 = 0, sy1 = 0;
     void markUnsupported(std::span<const uint32_t> words);
 };
