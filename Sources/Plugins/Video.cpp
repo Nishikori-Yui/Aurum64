@@ -5,6 +5,7 @@
 #include <cstring>
 #include <fstream>
 #include <cstdlib>
+#include <utility>
 
 AUR_PLUGIN(M64PLUGIN_GFX, 0x020200, "Aurum Metal RDP (experimental fill/VI)")
 namespace {
@@ -18,6 +19,8 @@ std::ofstream trace;
 std::string capturePath;
 std::vector<aurum::capture::Record> captureRecords;
 uint64_t captureSequence = 0;
+uint64_t captureBytes = 0, captureMaxBytes = 0, captureMaxVI = 0, captureVI = 0;
+bool captureStopped = false;
 void appendLE(std::vector<uint8_t>& payload, uint32_t value) {
     for (unsigned i = 0; i < 4; ++i) payload.push_back(uint8_t(value >> (i * 8)));
 }
@@ -46,6 +49,39 @@ void writeCapture() {
     std::string error;
     if (!output || !aurum::capture::write(output, captureRecords, error)) aur_fail(error.c_str());
 }
+void finishCapture(const char* reason) {
+    if (capturePath.empty() || captureStopped) return;
+    std::vector<uint8_t> payload;
+    appendLE(payload, uint32_t(decoder.commands));
+    appendLE(payload, uint32_t(decoder.unsupported));
+    while (*reason) payload.push_back(uint8_t(*reason++));
+    captureRecords.push_back({aurum::capture::kRecordEnd, captureSequence++, std::move(payload)});
+    writeCapture();
+    capturePath.clear();
+    captureRecords.clear();
+    captureStopped = true;
+}
+bool captureAllows(uint64_t additionalBytes) {
+    if (capturePath.empty() || captureStopped) return false;
+    if (captureMaxBytes && captureBytes + additionalBytes > captureMaxBytes) {
+        finishCapture("byte limit");
+        return false;
+    }
+    return true;
+}
+void appendCapture(aurum::capture::Record record) {
+    constexpr uint64_t kChunkOverhead = 24;
+    if (!captureAllows(record.payload.size() + kChunkOverhead)) return;
+    captureBytes += record.payload.size() + kChunkOverhead;
+    captureRecords.push_back(std::move(record));
+}
+uint64_t environmentLimit(const char* name) {
+    const char* text = std::getenv(name);
+    if (!text || !*text) return 0;
+    char* end = nullptr;
+    const unsigned long long value = std::strtoull(text, &end, 10);
+    return end && !*end ? uint64_t(value) : 0;
+}
 size_t memorySize() { return info.RDRAM_SIZE ? *info.RDRAM_SIZE : 8 * 1024 * 1024; }
 }
 extern "C" {
@@ -64,7 +100,11 @@ EXPORT int CALL RomOpen() {
         std::vector<uint8_t> payload;
         appendLE(payload, size);
         appendLE(payload, 0);
-        captureRecords.push_back({1, captureSequence++, std::move(payload)});
+        captureBytes = 32 + payload.size() + 24;
+        captureMaxBytes = environmentLimit("AURUM_AURCAP_MAX_BYTES");
+        captureMaxVI = environmentLimit("AURUM_AURCAP_MAX_VI");
+        captureVI = 0; captureStopped = false;
+        appendCapture({aurum::capture::kRecordInitial, captureSequence++, std::move(payload)});
     }
     decoder.fill = [](const aurum::rdp::Fill& fill) {
         std::string error;
@@ -75,13 +115,7 @@ EXPORT int CALL RomOpen() {
     return 1;
 }
 EXPORT void CALL RomClosed() {
-    if (!capturePath.empty()) {
-        std::vector<uint8_t> payload;
-        appendLE(payload, uint32_t(decoder.commands));
-        appendLE(payload, uint32_t(decoder.unsupported));
-        captureRecords.push_back({0xffff, captureSequence++, std::move(payload)});
-        writeCapture();
-    }
+    if (!capturePath.empty()) finishCapture("rom closed");
     if (trace.is_open()) trace.close();
     trace.clear(); capturePath.clear(); captureRecords.clear(); renderer.reset();
 }
@@ -119,7 +153,7 @@ EXPORT void CALL ProcessRDPList() {
             else std::memcpy(&word, info.RDRAM + address, 4);
             appendBE(payload, word);
         }
-        captureRecords.push_back({3, captureSequence++, std::move(payload)});
+        appendCapture({aurum::capture::kRecordRDP, captureSequence++, std::move(payload)});
     }
     *info.DPC_CURRENT_REG = end;
     publishDiagnostics();
@@ -142,7 +176,11 @@ EXPORT void CALL UpdateScreen() {
             appendLE(payload, *info.VI_V_START_REG);
             appendLE(payload, *info.VI_X_SCALE_REG);
             appendLE(payload, *info.VI_Y_SCALE_REG);
-            captureRecords.push_back({4, captureSequence++, std::move(payload)});
+            if (captureAllows(24 + payload.size())) {
+                ++captureVI;
+                appendCapture({aurum::capture::kRecordVI, captureSequence++, std::move(payload)});
+                if (captureMaxVI && captureVI >= captureMaxVI) finishCapture("VI limit");
+            }
         }
         if (renderCallback) renderCallback(1);
     }

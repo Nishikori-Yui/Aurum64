@@ -43,6 +43,20 @@ with tempfile.TemporaryDirectory(prefix="aurum-relocated-") as temp:
     run([swift_runner, tests / "fill.z64", pathlib.Path(temp) / "Swift Startup Tests"])
 run([root / ".build/native/aurum-rdp-tests", root / ".build/native/AurumRDP.metallib",
      tests / "fill.rdp", tests / "fill.aurcap"])
+with tempfile.TemporaryDirectory(prefix="aurum-capped-") as temp:
+    capped = pathlib.Path(temp) / "Aurum64.app"
+    shutil.copytree(root / "dist/Aurum64.app", capped)
+    capped_capture = tests / "capped.aurcap"
+    capped_env = {k: v for k, v in os.environ.items() if not k.startswith("DYLD_")}
+    capped_env.update({"AURUM_AURCAP": str(capped_capture), "AURUM_AURCAP_MAX_VI": "1"})
+    capped_result = subprocess.run([str(root / ".build/native/aurum-smoke"), tests / "fill.z64",
+         capped / "Contents/Frameworks", capped / "Contents/Resources", pathlib.Path(temp) / "user"],
+         timeout=30, text=True, capture_output=True, env=capped_env)
+    if capped_result.returncode:
+        print(capped_result.stderr)
+        raise RuntimeError(f"Capped capture smoke exited {capped_result.returncode}")
+    run([root / ".build/native/aurum-rdp-tests", root / ".build/native/AurumRDP.metallib",
+         tests / "fill.rdp", tests / "fill.aurcap", capped_capture])
 truncated = tests / "truncated.rdp"
 truncated.write_bytes((tests / "fill.rdp").read_bytes()[:-4])
 result = subprocess.run([str(root / ".build/native/aurum-rdp-tests"), str(root / ".build/native/AurumRDP.metallib"), str(truncated)],

@@ -8,6 +8,7 @@
 #include <string>
 #include <random>
 #include <sstream>
+#include <string_view>
 
 static void require(bool value, const char* message) { if (!value) throw std::runtime_error(message); }
 static void requireCapture(bool value, const std::string& error) {
@@ -237,7 +238,7 @@ int main(int argc, char** argv) {
                 }
             }
             require(submissions >= 1 && vis >= 1, "Capture events");
-            require(records.front().payload.size() == 8 && records.back().payload.size() == 8,
+            require(records.front().payload.size() == 8 && records.back().payload.size() > 8,
                     "Capture initial/end payload");
             for (unsigned repeat = 0; repeat < 20; ++repeat) {
                 decoder.reset();
@@ -254,6 +255,20 @@ int main(int argc, char** argv) {
             }
             std::printf("Capture: %zu records, %u submissions, %u VI events\n",
                         records.size(), submissions, vis);
+        }
+        if (argc >= 5) {
+            std::ifstream input(argv[4], std::ios::binary);
+            require(bool(input), "Cannot open limited aurcap capture");
+            std::vector<aurum::capture::Record> records;
+            std::string error;
+            require(aurum::capture::read(input, records, error), error.c_str());
+            unsigned vis = 0;
+            for (const auto& record : records) if (record.type == aurum::capture::kRecordVI) ++vis;
+            require(vis == 1 && records.back().type == aurum::capture::kRecordEnd &&
+                    records.back().payload.size() > 10 &&
+                    std::string_view(reinterpret_cast<const char*>(records.back().payload.data()) + 8, 2) == "VI",
+                    "Capture VI limit and reason");
+            std::puts("PASS: capture stops at the configured VI limit");
         }
         std::puts("PASS: fragmented RDP decoding, RGBA16/32 fills (48 randomized cases), VI conversion/blanking, invalid inputs");
     } catch (const std::exception& e) { std::fprintf(stderr,"FAIL: %s\n",e.what()); return 1; }
