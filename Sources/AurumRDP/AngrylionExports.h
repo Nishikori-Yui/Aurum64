@@ -2,6 +2,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstddef>
 
 extern "C" {
 enum vi_mode_reference {
@@ -12,4 +13,5 @@ enum vi_mode_reference {
 const uint8_t* n64video_tmem(void);
 const uint8_t* n64video_hidden_rdram(void);
 void n64video_set_vi_mode(int mode);
+void n64video_rdp_state_summary(uint8_t* output);
 }

@@ -51,6 +51,7 @@ target_include_directories(angrylion-core PUBLIC third_party/angrylion-rdp-plus/
 target_compile_options(angrylion-core PRIVATE -Wno-switch)
 add_executable(aurum-angrylion-reference Sources/AurumRDP/AngrylionReference.cpp)
 target_link_libraries(aurum-angrylion-reference PRIVATE angrylion-core aurum-capture)
+add_executable(aurum-reference-diff Sources/AurumRDP/ReferenceDiff.cpp)
 add_executable(aurum-smoke Tests/Smoke.cpp)
 target_include_directories(aurum-smoke PRIVATE "${RUNTIME}")
 enable_testing()

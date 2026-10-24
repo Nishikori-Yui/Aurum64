@@ -46,9 +46,13 @@ performs no network or ROM access, and is never linked into the application. Its
 layer output is a development artifact, not a claim of hardware truth. It emits
 the final RDRAM bytes in Angrylion's host-word-swapped layout, one compressed
 hidden/coverage byte per 16-bit pixel, the complete 4096-byte TMEM image, and
-direct VI color/depth/coverage RGBA8 frames for each captured VI event. The
-manifest names each layout; a first-difference report will consume these layers
-in the next M2 step.
+direct VI color/depth/coverage RGBA8 frames for each captured VI event. Each RDP
+submission and VI event also emits a checkpoint with neutral record/submission/
+command/VI coordinates and a stable hash over Angrylion's comparable RDP state
+subset. The manifest names each layout; `aurum-reference-diff` reports the first
+differing checkpoint, byte/pixel coordinate, and expected/actual value. Checkpoint
+hashes identify state divergence, while layer files preserve the follow-on state
+needed when shrinking a failing capture.
 
 ## Audio and controls
 

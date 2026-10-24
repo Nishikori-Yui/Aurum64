@@ -33,8 +33,27 @@ void require(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
 }
 
+struct Checkpoint {
+    std::string type;
+    uint64_t record = 0;
+    uint64_t submission = 0;
+    uint64_t command = 0;
+    uint64_t vi = 0;
+    std::vector<uint8_t> state;
+};
+
 void appendLE(std::vector<uint8_t>& bytes, uint64_t value) {
     for (unsigned i = 0; i < 8; ++i) bytes.push_back(uint8_t(value >> (i * 8)));
+}
+
+uint64_t fnv1a64(const void* bytes, size_t size) {
+    uint64_t hash = 1469598103934665603ull;
+    const auto* data = static_cast<const uint8_t*>(bytes);
+    for (size_t i = 0; i < size; ++i) {
+        hash ^= data[i];
+        hash *= 1099511628211ull;
+    }
+    return hash;
 }
 
 extern "C" void msg_error(const char* format, ...) {
@@ -70,6 +89,8 @@ struct Session {
     std::vector<std::vector<uint32_t>> colorLayers;
     std::vector<std::vector<uint32_t>> depthLayers;
     std::vector<std::vector<uint32_t>> coverageLayers;
+    std::vector<Checkpoint> checkpoints;
+    uint64_t submissions = 0;
 
     explicit Session(uint32_t memoryBytes)
         : rdram(memoryBytes), dmem(4096), dpRegisters(9), viRegisters(14),
@@ -117,6 +138,7 @@ struct Session {
         dpRegisters[DP_CURRENT] = start;
         dpRegisters[DP_END] = end;
         dpRegisters[DP_STATUS] = status | (xbus ? 1u : 0u);
+        ++submissions;
         for (uint32_t address = start; address < end; address += 4) {
             const size_t payloadOffset = 16 + (address - start);
             const uint32_t word = readBE32(record.payload.data() + payloadOffset);
@@ -130,6 +152,7 @@ struct Session {
                         destination.begin() + address);
         }
         n64video_process_list();
+        checkpoint("rdp", record.sequence, submissions, 0, 0);
     }
 
     void video(const aurum::capture::Record& record) {
@@ -143,6 +166,19 @@ struct Session {
         viRegisters[VI_V_SYNC] = 525;
         viRegisters[VI_V_CURRENT_LINE] = 0;
         width = height = 0;
+    }
+
+    void checkpoint(const char* type, uint64_t recordSequence, uint64_t submission,
+                    uint64_t command, uint64_t vi) {
+        Checkpoint value;
+        value.type = type;
+        value.record = recordSequence;
+        value.submission = submission;
+        value.command = command;
+        value.vi = vi;
+        value.state.resize(256);
+        n64video_rdp_state_summary(value.state.data());
+        checkpoints.push_back(std::move(value));
     }
 
     void captureFrame() {
@@ -203,7 +239,10 @@ int main(int argc, char** argv) {
                 "vi-color=RGBA8:R,G,B,A little-endian\n"
                 "vi-depth=RGBA8:grayscale-high-byte-of-Z16\n"
                 "vi-coverage=RGBA8:grayscale-Angrylion-coverage-encoding\n"
-                "counts=little-endian-uint64-triples:color-depth-coverage\n";
+                "counts=little-endian-uint64-triples:color-depth-coverage\n"
+                "geometry=little-endian-uint32-pairs:width-height-per-vi\n"
+                "checkpoints=little-endian-uint64-sextuples:type-record-submission-command-vi-hash\n"
+                "states=256-byte-little-endian-uint64-grid:49-named-rdp-fields\n";
         }
         std::ifstream input(argv[1], std::ios::binary);
         if (!input) throw std::runtime_error("Cannot open capture.");
@@ -232,6 +271,8 @@ int main(int argc, char** argv) {
             else if (record.type == aurum::capture::kRecordVI) {
                 session.video(record);
                 session.captureFrame();
+                session.checkpoint("vi", record.sequence, session.submissions, 0,
+                                   session.frames);
             }
         }
 
@@ -269,6 +310,28 @@ int main(int argc, char** argv) {
                                session.coverageLayers[i].data(), session.coverageLayers[i].size() * 4);
             }
             writeLayer(".counts", littleEndianCounts.data(), littleEndianCounts.size());
+            std::vector<uint8_t> geometry;
+            for (const Checkpoint& item : session.checkpoints) {
+                if (item.type != "vi") continue;
+                for (unsigned i = 0; i < 4; ++i) geometry.push_back(uint8_t(session.width >> (i * 8)));
+                for (unsigned i = 0; i < 4; ++i) geometry.push_back(uint8_t(session.height >> (i * 8)));
+            }
+            writeLayer(".geometry", geometry.data(), geometry.size());
+            std::vector<uint8_t> checkpointBytes;
+            std::vector<uint8_t> checkpointStates;
+            for (const Checkpoint& item : session.checkpoints) {
+                const uint64_t typeCode = item.type == "rdp" ? 1 : 2;
+                appendLE(checkpointBytes, typeCode);
+                appendLE(checkpointBytes, item.record);
+                appendLE(checkpointBytes, item.submission);
+                appendLE(checkpointBytes, item.command);
+                appendLE(checkpointBytes, item.vi);
+                appendLE(checkpointBytes, fnv1a64(item.state.data(), item.state.size()));
+                checkpointStates.insert(checkpointStates.end(), item.state.begin(),
+                                        item.state.end());
+            }
+            writeLayer(".checkpoints", checkpointBytes.data(), checkpointBytes.size());
+            writeLayer(".states", checkpointStates.data(), checkpointStates.size());
         }
 
         std::printf("{\"engine\":\"angrylion-rdp-plus\",\"commit\":\"9c8b9ed3e7d7f00dff8bc872ccdd3fba1a3673fc\",\"records\":%zu,\"frames\":%llu,\"invalidFrames\":%llu,\"width\":%u,\"height\":%u,\"nonzero16\":%llu,\"layers\":%s}\n",

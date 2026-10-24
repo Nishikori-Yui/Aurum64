@@ -91,6 +91,7 @@ AURUM_RDP_TRACE="$PWD/.build/test.rdp" \
 
 .build/native/aurum-rdp-tests .build/native/AurumRDP.metallib .build/test.rdp
 .build/native/aurum-angrylion-reference .build/tests/fill.aurcap .build/tests/reference/fill
+.build/native/aurum-reference-diff .build/tests/reference/fill .build/tests/reference/actual/fill .build/tests/fill.aurcap
 ```
 
 Set `AURUM_VERBOSE=1` for upstream diagnostics. Traces currently contain commands
@@ -102,7 +103,9 @@ The last command is a development-only, offline Angrylion-Plus reference pinned
 in `third_party`. It reads the same `.aurcap` without ROM files, networking, or
 the application runtime, prints machine-readable statistics, and optionally
 writes raw RDRAM, hidden coverage bytes, TMEM, and per-frame VI color/depth/
-coverage layers with a manifest. It is not part of `Aurum64.app`.
+coverage layers with a manifest. The diff tool reports the first differing
+checkpoint or byte/pixel coordinate with expected/actual values. Neither tool is
+part of `Aurum64.app`.
 
 ## Next milestones
 

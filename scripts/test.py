@@ -83,6 +83,43 @@ assert (reference_dir / "fill.vi-color-7.rgba8").stat().st_size == 205 * 240 * 4
 assert (reference_dir / "fill.vi-depth-7.rgba8").stat().st_size == 205 * 240 * 4
 assert (reference_dir / "fill.vi-coverage-7.rgba8").stat().st_size == 205 * 240 * 4
 print(layer.stdout, end="")
+actual_dir = reference_dir / "actual"
+actual_dir.mkdir(exist_ok=True)
+run([root / ".build/native/aurum-angrylion-reference", tests / "fill.aurcap",
+     actual_dir / "fill"])
+run([root / ".build/native/aurum-reference-diff", reference_dir / "fill",
+     actual_dir / "fill", tests / "fill.aurcap"])
+state = bytearray((actual_dir / "fill.states").read_bytes())
+state[4] ^= 1
+(actual_dir / "fill.states").write_bytes(state)
+checkpoint_bytes = bytearray((actual_dir / "fill.checkpoints").read_bytes())
+checkpoint_bytes[40] ^= 1
+(actual_dir / "fill.checkpoints").write_bytes(checkpoint_bytes)
+state_diff = subprocess.run([str(root / ".build/native/aurum-reference-diff"),
+                             reference_dir / "fill", actual_dir / "fill",
+                             tests / "fill.aurcap"], capture_output=True, text=True, timeout=30)
+assert state_diff.returncode == 1, state_diff.stderr
+state_difference = json.loads(state_diff.stdout)
+assert state_difference["firstDifference"] == "checkpoint"
+assert state_difference["checkpointIndex"] == 0 and state_difference["submission"] == 1
+assert state_difference["rdpState"]["field"] == "fb_size"
+assert state_difference["rdpState"]["expected"] == 2
+assert state_difference["rdpState"]["actual"] == 3
+print(state_diff.stdout, end="")
+run([root / ".build/native/aurum-angrylion-reference", tests / "fill.aurcap",
+     actual_dir / "fill"])
+mutated = bytearray((actual_dir / "fill.rdram").read_bytes())
+mutated[1234] ^= 1
+(actual_dir / "fill.rdram").write_bytes(mutated)
+diff = subprocess.run([str(root / ".build/native/aurum-reference-diff"),
+                       reference_dir / "fill", actual_dir / "fill", tests / "fill.aurcap"],
+                      capture_output=True, text=True, timeout=30)
+assert diff.returncode == 1, diff.stderr
+difference = json.loads(diff.stdout)
+assert difference["status"] == "differ"
+assert difference["firstDifference"] == "byte" and difference["layer"] == "rdram"
+assert difference["offset"] == 1234 and difference["expected"] == 0 and difference["actual"] == 1
+print(diff.stdout, end="")
 with tempfile.TemporaryDirectory(prefix="aurum-capped-") as temp:
     capped = pathlib.Path(temp) / "Aurum64.app"
     shutil.copytree(root / "dist/Aurum64.app", capped)
