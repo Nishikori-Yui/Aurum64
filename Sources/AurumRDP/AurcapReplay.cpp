@@ -76,38 +76,61 @@ struct Replay {
         uint32_t vi[14]{};
         for (unsigned i = 0; i < 7; ++i) vi[map[i]] = readLE(record.payload.data() + i * 4);
         const uint32_t type = vi[0] & 3;
-        const int width = int(vi[3] & 1023) - int((vi[3] >> 16) & 1023);
-        const int height = int(vi[4] & 1023) - int((vi[4] >> 16) & 1023);
-        if (type < 2 || !vi[2] || width <= 0 || height < 2 || !(vi[5] & 4095) || !(vi[6] & 4095)) {
+        int hStart = int((vi[3] >> 16) & 1023);
+        const int hEnd = int(vi[3] & 1023);
+        int vStart = int((vi[4] >> 16) & 1023);
+        const int vEnd = int(vi[4] & 1023);
+        int hres = hEnd - hStart;
+        int vres = (vEnd - vStart) / 2;
+        const uint32_t xScale = vi[5] & 4095;
+        uint32_t xOffset = (vi[5] >> 16) & 4095;
+        const uint32_t yScale = vi[6] & 4095;
+        uint32_t yOffset = (vi[6] >> 16) & 4095;
+        hStart -= 108;
+        if (hStart < 0) {
+            xOffset += xScale * uint32_t(-hStart);
+            hres += hStart;
+            hStart = 0;
+        }
+        vStart = (vStart - 34) / 2;
+        if (vStart < 0) {
+            yOffset += yScale * uint32_t(-vStart);
+            vStart = 0;
+        }
+        const int scaledWidth = int(xScale) * hres / 1024;
+        int scaledHeight = int(yScale) * vres / 1024;
+        if (yScale * vres % 1024) ++scaledHeight;
+        if (type < 2 || !vi[2] || hres <= 0 || vres <= 0 || scaledWidth <= 0 ||
+            scaledHeight <= 0 || !xScale || !yScale) {
             color.emplace_back();
             geometry.emplace_back(0, 0);
             checkpoints.push_back({2, record.sequence, 0, 0, frames + 1,
                                    lastStateHash});
             return;
         }
-        const uint32_t outWidth = uint32_t(std::min(width, 640));
-        const uint32_t outHeight = uint32_t(std::min(height / 2, 576));
+        const int border = (hres - (hres - 7)) * scaledWidth / hres;
+        const int outputOffset = border / 2 + 1;
+        const uint32_t outWidth = uint32_t(std::max(scaledWidth - border, 0));
+        const uint32_t outHeight = uint32_t(std::min(scaledHeight, 576));
         std::vector<uint32_t> pixels(outWidth * outHeight, 0xff000000u);
         const uint32_t bytes = type == 2 ? 2 : 4;
-        const uint32_t xScale = vi[5] & 4095, xOffset = vi[5] >> 16 & 4095;
-        const uint32_t yScale = vi[6] & 4095, yOffset = vi[6] >> 16 & 4095;
         for (uint32_t y = 0; y < outHeight; ++y) {
-            const uint32_t sourceY = (y * yScale + yOffset) >> 10;
+                const uint32_t sourceY = y;
             for (uint32_t x = 0; x < outWidth; ++x) {
-                const uint32_t sourceX = (x * xScale + xOffset) >> 10;
+                const uint32_t sourceX = x + uint32_t(outputOffset);
                 const size_t address = (vi[1] & 0xffffffu) + (size_t(sourceY) * vi[2] + sourceX) * bytes;
                 if (sourceX >= vi[2] || address + bytes > rdram.size()) continue;
                 uint32_t word;
                 std::memcpy(&word, rdram.data() + (address & ~3u), 4);
                 if (bytes == 2) {
                     const uint32_t value = (word >> ((address & 2) ? 0 : 16)) & 65535;
-                    const uint32_t r = (value >> 11) & 31, g = (value >> 6) & 31, b = (value >> 1) & 31;
-                    pixels[size_t(y) * outWidth + x] = (r << 3 | r >> 2) |
-                                                       ((g << 3 | g >> 2) << 8) |
-                                                       ((b << 3 | b >> 2) << 16) | 0xff000000u;
+                    const uint32_t r = (value >> 8) & 0xf8;
+                    const uint32_t g = (value & 0x7c0) >> 3;
+                    const uint32_t b = (value & 0x3e) << 2;
+                    pixels[size_t(y) * outWidth + x] = r | (g << 8) | (b << 16);
                 } else {
-                    pixels[size_t(y) * outWidth + x] = (word >> 24) | (word >> 8 & 0xff00) |
-                                                       (word << 8 & 0xff0000) | 0xff000000u;
+                    uint32_t r = word >> 24, g = word >> 16 & 255, b = word >> 8 & 255;
+                    pixels[size_t(y) * outWidth + x] = r | (g << 8) | (b << 16);
                 }
             }
         }

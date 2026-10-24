@@ -108,9 +108,10 @@ checkpoint or byte/pixel coordinate with expected/actual values. Neither tool is
 part of `Aurum64.app`.
 
 `aurum-aurcap-replay prefix` can emit the same neutral checkpoint/RDRAM/VI-color
-format for Aurum's scalar supported-fill path. It currently lacks hidden state,
-TMEM, depth, coverage, and filtered-VI output; those remain explicit differential
-gaps rather than silently passing comparisons.
+format for Aurum's scalar supported-fill path. Its generated fill fixture
+matches Angrylion bit-for-bit in RDRAM and pixel-for-pixel in direct VI color.
+It currently lacks hidden state, TMEM, depth, coverage, and filtered-VI output;
+those remain explicit differential gaps rather than silently passing comparisons.
 
 ## Next milestones
 

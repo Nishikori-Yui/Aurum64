@@ -56,9 +56,10 @@ needed when shrinking a failing capture.
 
 The CPU-only `aurum-aurcap-replay` emits the same checkpoint and RDRAM/VI-color
 layer format for Aurum's supported fill path. Its current RDRAM result matches
-Angrylion on the generated fill fixture, including the submitted command bytes;
-its direct VI geometry intentionally reflects Aurum's 320x240 scanout rather
-than Angrylion's cropped 205x240 filtered view. Missing hidden/TMEM/depth/
+Angrylion on the generated fill fixture, including the submitted command bytes.
+Its direct VI layer follows the reference's active-area semantics (packed
+H/V start bounds, x/y scale dimensions, and filtered border crop) and now
+matches the 205x240 RGBA8 frames pixel-for-pixel. Missing hidden/TMEM/depth/
 coverage layers are reported as unavailable by the diff tool.
 
 ## Audio and controls
