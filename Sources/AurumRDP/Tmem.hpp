@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <span>
 
 namespace aurum::tmem {
 class Store {
@@ -31,6 +32,16 @@ public:
     }
     void writeByte(uint32_t logicalByte, uint8_t value) {
         bytes[logicalByte & (kBytes - 1)] = value;
+    }
+    void writeSpan(uint32_t logicalByte, std::span<const uint8_t> source) {
+        for (size_t i = 0; i < source.size(); ++i)
+            writeByte(logicalByte + uint32_t(i), source[i]);
+    }
+    bool writeTlut(uint32_t entry, std::span<const uint8_t> source) {
+        if ((source.size() & 1) || entry > 511 ||
+            source.size() / 2 > 512 - entry) return false;
+        writeSpan(uint32_t(tlutAddress(entry)), source);
+        return true;
     }
     uint16_t read16(uint32_t logicalWord, uint32_t bank = 0) const {
         const size_t address = word16Address(logicalWord, bank);
