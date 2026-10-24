@@ -6,6 +6,7 @@ Checked on 2026-10-24. Build inputs are submodule commits, not floating branches
 | --- | --- | --- | --- |
 | Mupen64Plus core | https://github.com/mupen64plus/mupen64plus-core / `3be6336a1de6f32ccc4f57bf80c988163fe6bf7a` | GPL-2.0-or-later in source headers; see upstream LICENSES | R4300 interpreter, RDRAM, peripheral devices, scheduling, saves |
 | CXD4 RSP | https://github.com/mupen64plus/mupen64plus-rsp-cxd4 / `00906a92641c540a64e4e7505012157315314810` | CC0 for RSP; retain per-file API/OSAL notices | Scalar LLE RSP, graphics and audio microcode |
+| Angrylion-Plus core | https://github.com/ata4/angrylion-rdp-plus / `9c8b9ed3e7d7f00dff8bc872ccdd3fba1a3673fc` | MAME license for `src/core`; Mupen64Plus plugin layer is GPL-2.0 and excluded | Development-only offline software reference |
 | SDL2 or SDL2-compat | https://github.com/libsdl-org/SDL / https://github.com/libsdl-org/sdl2-compat | zlib | Required by upstream core; not the native UI, video, input or audio backend |
 | SDL3 (when using SDL2-compat) | https://github.com/libsdl-org/SDL | zlib | Explicitly bundled dlopen dependency |
 | libpng | https://www.libpng.org/pub/png/libpng.html | libpng | Upstream screenshot support |
@@ -43,8 +44,8 @@ for local testing, not Developer ID signing/notarization or an App Store release
 ## M2 software-reference audit
 
 The M2 accuracy investigation was completed on 2026-10-24 before copying any
-candidate source. Candidate repositories were inspected in temporary checkouts;
-no code from this audit is present in the application or its build inputs yet.
+candidate source. After the decision, the selected pinned core was added as a
+submodule and remains excluded from the application bundle.
 
 | Candidate | Exact pin | License finding | macOS ARM64 result | Decision |
 | --- | --- | --- | --- | --- |
@@ -54,8 +55,8 @@ no code from this audit is present in the application or its build inputs yet.
 | [ares](https://github.com/ares-emulator/ares) | `c76aaffa6e69778baf9a66d1da04298ac2ed7d1d` | Composite licensing; the relevant N64 subsystem requires file-by-file review rather than applying one project-wide label. | Not built for this audit. | Optional cross-reference only. Re-audit exact files before any use. |
 | [Orbit64](https://github.com/Wronk4/orbit64) | `93879b6a642ab321b1ad9f25646412193e29aeb2` | No LICENSE/COPYING/NOTICE file and GitHub reports no recognized license at this pin. | Not applicable. | Do not copy or link until an applicable license is established. |
 
-The selected reference will remain a development-only, offline process. Its
-MAME license forbids commercial distribution, so it must not be bundled with a
+The selected reference remains a development-only, offline process. Its MAME
+license forbids commercial distribution, so it must not be bundled with a
 production `.app` or marketed as a product feature. A distributed development
 build must provide the pinned upstream source, all local modifications, and the
 upstream MAME notice; original adapter code cannot be labeled MIT on behalf of

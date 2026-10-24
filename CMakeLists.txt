@@ -44,6 +44,13 @@ add_executable(aurum-capture-tests Tests/CaptureTests.cpp)
 target_link_libraries(aurum-capture-tests PRIVATE aurum-capture)
 add_executable(aurum-aurcap-replay Sources/AurumRDP/AurcapReplay.cpp)
 target_link_libraries(aurum-aurcap-replay PRIVATE aurum-capture aurum-rdp-decode)
+add_library(angrylion-core STATIC
+    third_party/angrylion-rdp-plus/src/core/n64video.c
+    third_party/angrylion-rdp-plus/src/core/parallel.cpp)
+target_include_directories(angrylion-core PUBLIC third_party/angrylion-rdp-plus/src)
+target_compile_options(angrylion-core PRIVATE -Wno-switch)
+add_executable(aurum-angrylion-reference Sources/AurumRDP/AngrylionReference.cpp)
+target_link_libraries(aurum-angrylion-reference PRIVATE angrylion-core aurum-capture)
 add_executable(aurum-smoke Tests/Smoke.cpp)
 target_include_directories(aurum-smoke PRIVATE "${RUNTIME}")
 enable_testing()

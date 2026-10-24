@@ -39,6 +39,14 @@ completed. Main-thread waits are an explicit temporary limitation, to be replace
 by bounded in-flight resources after correctness testing. No Vulkan, MoltenVK,
 OpenGL or SDL window is used for rendering.
 
+`aurum-angrylion-reference` is a separate development tool whose original GPL
+adapter replays the same `.aurcap` command/VI records through the pinned
+MAME-licensed Angrylion core. It owns synthetic RDRAM/DMEM and register arrays,
+performs no network or ROM access, and is never linked into the application. Its
+current JSON output is an execution count, not a claim of pixel-for-pixel
+equivalence; layered output and the first-difference report arrive in the next
+M2 steps.
+
 ## Audio and controls
 
 CXD4 executes audio microcode in LLE; the Core Audio adapter receives AI PCM DMA.

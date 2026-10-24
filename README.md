@@ -90,12 +90,18 @@ AURUM_RDP_TRACE="$PWD/.build/test.rdp" \
   .build/test-user
 
 .build/native/aurum-rdp-tests .build/native/AurumRDP.metallib .build/test.rdp
+.build/native/aurum-angrylion-reference .build/tests/fill.aurcap
 ```
 
 Set `AURUM_VERBOSE=1` for upstream diagnostics. Traces currently contain commands
 only, not RDRAM/TMEM/VI snapshots, so they replay self-contained fill streams,
 not arbitrary games. Tests have external timeouts; a malformed non-yielding RSP
 program can still hang its upstream interpreter.
+
+The last command is a development-only, offline Angrylion-Plus reference pinned
+in `third_party`. It reads the same `.aurcap` without ROM files, networking, or
+the application runtime and prints machine-readable statistics. It is not part
+of `Aurum64.app`.
 
 ## Next milestones
 

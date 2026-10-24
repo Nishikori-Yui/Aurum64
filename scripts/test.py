@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
+import json
 import os
 import pathlib
 import shutil
@@ -48,6 +49,17 @@ replay = subprocess.run([str(root / ".build/native/aurum-aurcap-replay"), tests 
 assert replay.returncode == 0 and '"submissions":1' in replay.stdout and \
        '"commands":6' in replay.stdout and '"unsupported":0' in replay.stdout, replay.stderr
 print(replay.stdout, end="")
+reference = subprocess.run([str(root / ".build/native/aurum-angrylion-reference"),
+                            tests / "fill.aurcap"], capture_output=True, text=True, timeout=30)
+if reference.returncode:
+    raise RuntimeError(reference.stderr)
+reference_stats = json.loads(reference.stdout)
+assert reference_stats["engine"] == "angrylion-rdp-plus"
+assert reference_stats["commit"] == "9c8b9ed3e7d7f00dff8bc872ccdd3fba1a3673fc"
+assert reference_stats["frames"] == 8 and reference_stats["invalidFrames"] == 0
+assert reference_stats["width"] > 0 and reference_stats["height"] > 0
+assert reference_stats["nonzero16"] > 0
+print(reference.stdout, end="")
 with tempfile.TemporaryDirectory(prefix="aurum-capped-") as temp:
     capped = pathlib.Path(temp) / "Aurum64.app"
     shutil.copytree(root / "dist/Aurum64.app", capped)
