@@ -85,6 +85,28 @@ int main(int argc, char** argv) {
                 context.capturedWords == 32 && context.command == 8 &&
                 context.submission == 1 && context.vi == 2 &&
                 context.words[0] == triangle[0], "Unsupported context");
+        const size_t expectedWords[64] = {
+            2, 2, 2, 2, 2, 2, 2, 2,
+            8, 12, 24, 28, 24, 28, 40, 44,
+            2, 2, 2, 2, 2, 2, 2, 2,
+            2, 2, 2, 2, 2, 2, 2, 2,
+            2, 2, 2, 2, 4, 4, 2, 2,
+            2, 2, 2, 2, 2, 2, 2, 2,
+            2, 2, 2, 2, 2, 2, 2, 2,
+            2, 2, 2, 2, 2, 2, 2, 2
+        };
+        for (size_t opcode = 0; opcode < 64; ++opcode)
+            require(Decoder::wordCount(static_cast<uint8_t>(opcode)) == expectedWords[opcode],
+                    "RDP opcode word length table");
+        decoder.reset();
+        decoder.beginSubmission();
+        for (size_t opcode = 0; opcode < 64; ++opcode) {
+            std::vector<uint32_t> command(expectedWords[opcode], 0);
+            command[0] = static_cast<uint32_t>(opcode << 24);
+            decoder.push(command);
+        }
+        require(!decoder.hasPendingWords() && decoder.commands == 64,
+                "All RDP opcode boundaries");
         std::mt19937 random(0x64);
         for (unsigned trial = 0; trial < 48; ++trial) {
             std::vector<uint32_t> actual(16384), expected;

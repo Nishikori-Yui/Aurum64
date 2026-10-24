@@ -1,14 +1,23 @@
 // SPDX-License-Identifier: MIT
 #include "RDP.hpp"
 #include <algorithm>
+#include <array>
 #include <limits>
 
 namespace aurum::rdp {
 size_t Decoder::wordCount(uint8_t op) {
-    if (op >= 8 && op <= 15) {
-        return 8 + ((op & 4) ? 16 : 0) + ((op & 2) ? 16 : 0) + ((op & 1) ? 4 : 0);
-    }
-    return (op == 0x24 || op == 0x25) ? 4 : 2;
+    // Keep this table aligned with Angrylion's 64-entry command dispatch table.
+    static constexpr std::array<uint8_t, 64> words = {
+        2, 2, 2, 2, 2, 2, 2, 2,
+        8, 12, 24, 28, 24, 28, 40, 44,
+        2, 2, 2, 2, 2, 2, 2, 2,
+        2, 2, 2, 2, 2, 2, 2, 2,
+        2, 2, 2, 2, 4, 4, 2, 2,
+        2, 2, 2, 2, 2, 2, 2, 2,
+        2, 2, 2, 2, 2, 2, 2, 2,
+        2, 2, 2, 2, 2, 2, 2, 2
+    };
+    return words[op & 63];
 }
 void Decoder::reset() {
     pending.clear(); commands = unsupported = 0;
