@@ -31,6 +31,21 @@ int main() {
         uploader.setTile(2, 510);
         require(!uploader.loadTlut(rdram.data(), rdram.size(), 2, 0, 0, 12, 0),
                 "TLUT destination overflow accepted");
+        std::array<uint16_t, 4> tileSource{0x0102, 0x0304, 0x0506, 0x0708};
+        for (unsigned i = 0; i < tileSource.size(); ++i)
+            require(aurum::memory::writeHalfword(rdram.data(), rdram.size(),
+                                                  0x1200 + (i + (i / 2) * 2) * 2,
+                                                  tileSource[i]),
+                    "tile source setup");
+        uploader.setTextureImage(0, 2, 4, 0x1200);
+        uploader.setTile(1, 2, 1);
+        require(uploader.loadTile(rdram.data(), rdram.size(), 1, 0, 0, 4, 4),
+                "LoadTile upload");
+        require(uploader.store().read16(2) == 0x0102 &&
+                uploader.store().read16(3) == 0x0304 &&
+                uploader.store().read16(6) == 0x0506 &&
+                uploader.store().read16(7) == 0x0708,
+                "LoadTile stride bytes differ");
         std::puts("PASS: minimal SetTextureImage/SetTile/LoadTLUT byte upload");
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: %s\n", error.what());
