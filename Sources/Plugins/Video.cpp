@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "Common.hpp"
 #include "Capture.hpp"
+#include "DpcDispatch.hpp"
 #include "Renderer.hpp"
 #include <cstring>
 #include <fstream>
@@ -121,32 +122,30 @@ EXPORT void CALL RomClosed() {
 }
 EXPORT void CALL AurumResetVideo() { decoder.reset(); pixels.clear(); width = height = 0; }
 EXPORT void CALL ProcessRDPList() {
-    constexpr uint32_t kDpcXbusDmemDma = 0x001;
-    constexpr uint32_t kDpcFreeze = 0x002;
-    constexpr uint32_t kDpcFlush = 0x004;
     uint32_t current = *info.DPC_CURRENT_REG & 0x00fffff8;
     const uint32_t start = current;
     const uint32_t end = *info.DPC_END_REG & 0x00fffff8;
     const uint32_t status = *info.DPC_STATUS_REG;
-    const bool xbus = status & kDpcXbusDmemDma;
-    if (status & kDpcFreeze) return;
+    const bool xbus = status & aurum::dpc::kXbusDmemDma;
+    if (!aurum::dpc::shouldProcess(status)) return;
     // The decoder executes synchronously, so DPC flush has no deferred queue to drain.
-    if (status & kDpcFlush) publishDiagnostics();
-    const uint32_t busLimit = xbus ? 4096u : memorySize();
-    if (end < current || end - current > busLimit) { aur_fail("Invalid RDP command range."); return; }
+    if (aurum::dpc::flushRequested(status)) publishDiagnostics();
+    if (!aurum::dpc::validRange(current, end, xbus, memorySize())) {
+        aur_fail("Invalid RDP command range."); return;
+    }
     decoder.beginSubmission();
     while (current < end) {
         uint32_t words[2];
-        unsigned count = 0;
-        for (; count < 2 && current < end; ++count, current += 4) {
+        const uint32_t count = aurum::dpc::wordsAvailable(current, end);
+        for (uint32_t index = 0; index < count; ++index, current += 4) {
             const uint32_t address = current;
-            if (xbus) std::memcpy(&words[count], info.DMEM + (address & 4095), 4);
+            if (xbus) std::memcpy(&words[index], info.DMEM + aurum::dpc::busAddress(address, true), 4);
             else {
                 if (address + 4 > memorySize()) { aur_fail("RDP command exceeds RDRAM."); return; }
-                std::memcpy(&words[count], info.RDRAM + address, 4);
+                std::memcpy(&words[index], info.RDRAM + aurum::dpc::busAddress(address, false), 4);
             }
             // Trace format is network-order words, independent of the host's endianness.
-            if (trace) { uint32_t be = __builtin_bswap32(words[count]); trace.write(reinterpret_cast<char*>(&be), 4); }
+            if (trace) { uint32_t be = __builtin_bswap32(words[index]); trace.write(reinterpret_cast<char*>(&be), 4); }
         }
         decoder.push(std::span(words, count));
     }
@@ -158,8 +157,8 @@ EXPORT void CALL ProcessRDPList() {
         appendLE(payload, xbus ? 1u : 0u);
         for (uint32_t address = start; address < end; address += 4) {
             uint32_t word;
-            if (xbus) std::memcpy(&word, info.DMEM + (address & 4095), 4);
-            else std::memcpy(&word, info.RDRAM + address, 4);
+            if (xbus) std::memcpy(&word, info.DMEM + aurum::dpc::busAddress(address, true), 4);
+            else std::memcpy(&word, info.RDRAM + aurum::dpc::busAddress(address, false), 4);
             appendBE(payload, word);
         }
         appendCapture({aurum::capture::kRecordRDP, captureSequence++, std::move(payload)});
