@@ -121,10 +121,17 @@ EXPORT void CALL RomClosed() {
 }
 EXPORT void CALL AurumResetVideo() { decoder.reset(); pixels.clear(); width = height = 0; }
 EXPORT void CALL ProcessRDPList() {
+    constexpr uint32_t kDpcXbusDmemDma = 0x001;
+    constexpr uint32_t kDpcFreeze = 0x002;
+    constexpr uint32_t kDpcFlush = 0x004;
     uint32_t current = *info.DPC_CURRENT_REG & 0x00fffff8;
     const uint32_t start = current;
     const uint32_t end = *info.DPC_END_REG & 0x00fffff8;
-    const bool xbus = *info.DPC_STATUS_REG & 1;
+    const uint32_t status = *info.DPC_STATUS_REG;
+    const bool xbus = status & kDpcXbusDmemDma;
+    if (status & kDpcFreeze) return;
+    // The decoder executes synchronously, so DPC flush has no deferred queue to drain.
+    if (status & kDpcFlush) publishDiagnostics();
     const uint32_t busLimit = xbus ? 4096u : memorySize();
     if (end < current || end - current > busLimit) { aur_fail("Invalid RDP command range."); return; }
     decoder.beginSubmission();
@@ -147,7 +154,7 @@ EXPORT void CALL ProcessRDPList() {
         std::vector<uint8_t> payload;
         appendLE(payload, start);
         appendLE(payload, end);
-        appendLE(payload, *info.DPC_STATUS_REG);
+        appendLE(payload, status);
         appendLE(payload, xbus ? 1u : 0u);
         for (uint32_t address = start; address < end; address += 4) {
             uint32_t word;
