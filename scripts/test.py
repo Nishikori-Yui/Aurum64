@@ -4,6 +4,7 @@ import json
 import os
 import pathlib
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -59,7 +60,29 @@ assert reference_stats["commit"] == "9c8b9ed3e7d7f00dff8bc872ccdd3fba1a3673fc"
 assert reference_stats["frames"] == 8 and reference_stats["invalidFrames"] == 0
 assert reference_stats["width"] > 0 and reference_stats["height"] > 0
 assert reference_stats["nonzero16"] > 0
+assert reference_stats["layers"] is False
 print(reference.stdout, end="")
+reference_dir = tests / "reference"
+reference_dir.mkdir(exist_ok=True)
+layer = subprocess.run([str(root / ".build/native/aurum-angrylion-reference"),
+                        tests / "fill.aurcap", reference_dir / "fill"],
+                       capture_output=True, text=True, timeout=30)
+if layer.returncode:
+    raise RuntimeError(layer.stderr)
+layer_stats = json.loads(layer.stdout)
+assert layer_stats["layers"] is True
+manifest = (reference_dir / "fill.manifest").read_text()
+assert "format=aurum-reference-layers/1" in manifest
+assert (reference_dir / "fill.rdram").stat().st_size == 8 * 1024 * 1024
+assert (reference_dir / "fill.hidden").stat().st_size == 4 * 1024 * 1024
+assert (reference_dir / "fill.tmem").stat().st_size == 4096
+counts = (reference_dir / "fill.counts").read_bytes()
+layer_counts = struct.unpack_from("<24Q", counts)
+assert all(value == 205 * 240 for value in layer_counts), layer_counts
+assert (reference_dir / "fill.vi-color-7.rgba8").stat().st_size == 205 * 240 * 4
+assert (reference_dir / "fill.vi-depth-7.rgba8").stat().st_size == 205 * 240 * 4
+assert (reference_dir / "fill.vi-coverage-7.rgba8").stat().st_size == 205 * 240 * 4
+print(layer.stdout, end="")
 with tempfile.TemporaryDirectory(prefix="aurum-capped-") as temp:
     capped = pathlib.Path(temp) / "Aurum64.app"
     shutil.copytree(root / "dist/Aurum64.app", capped)

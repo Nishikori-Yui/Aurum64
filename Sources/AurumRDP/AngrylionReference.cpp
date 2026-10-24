@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "AngrylionExports.h"
 #include "Capture.hpp"
 
 extern "C" {
 #include <core/n64video.h>
-#include <core/msg.h>
 }
 
 #include <algorithm>
@@ -33,6 +33,10 @@ void require(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
 }
 
+void appendLE(std::vector<uint8_t>& bytes, uint64_t value) {
+    for (unsigned i = 0; i < 8; ++i) bytes.push_back(uint8_t(value >> (i * 8)));
+}
+
 extern "C" void msg_error(const char* format, ...) {
     std::va_list arguments;
     va_start(arguments, format);
@@ -59,11 +63,13 @@ struct Session {
     std::vector<uint32_t*> viPointers;
     uint32_t interrupts = 0;
     bool initialized = false;
-    std::vector<uint32_t> pixels;
     uint32_t width = 0;
     uint32_t height = 0;
     uint64_t frames = 0;
     uint64_t invalidFrames = 0;
+    std::vector<std::vector<uint32_t>> colorLayers;
+    std::vector<std::vector<uint32_t>> depthLayers;
+    std::vector<std::vector<uint32_t>> coverageLayers;
 
     explicit Session(uint32_t memoryBytes)
         : rdram(memoryBytes), dmem(4096), dpRegisters(9), viRegisters(14),
@@ -136,21 +142,36 @@ struct Session {
         // Supply NTSC defaults for the timing registers Angrylion additionally reads.
         viRegisters[VI_V_SYNC] = 525;
         viRegisters[VI_V_CURRENT_LINE] = 0;
+        width = height = 0;
+    }
+
+    void captureFrame() {
+        n64video_set_vi_mode(reference_vi_color);
         n64video_frame_buffer frame{};
         n64video_update_screen(&frame);
         if (frame.valid) {
-            require(frame.width <= frame.pitch, "Reference VI width exceeds pitch.");
-            require(static_cast<uint64_t>(frame.pitch) * frame.height <=
-                        std::numeric_limits<size_t>::max(),
-                    "Reference VI geometry overflows output storage.");
-            pixels.resize(static_cast<size_t>(frame.pitch) * frame.height);
+            std::vector<uint32_t> pixels(static_cast<size_t>(frame.width) * frame.height);
             std::memcpy(pixels.data(), frame.pixels, pixels.size() * sizeof(uint32_t));
+            colorLayers.push_back(std::move(pixels));
             width = frame.width;
             height = frame.height;
             ++frames;
         } else {
+            colorLayers.emplace_back();
             ++invalidFrames;
         }
+        depthLayers.push_back(runMode(reference_vi_depth));
+        coverageLayers.push_back(runMode(reference_vi_coverage));
+    }
+
+    std::vector<uint32_t> runMode(int mode) {
+        n64video_set_vi_mode(mode);
+        n64video_frame_buffer frame{};
+        n64video_update_screen(&frame);
+        if (!frame.valid) return {};
+        std::vector<uint32_t> pixels(static_cast<size_t>(frame.width) * frame.height);
+        std::memcpy(pixels.data(), frame.pixels, pixels.size() * sizeof(uint32_t));
+        return pixels;
     }
 
     ~Session() {
@@ -161,11 +182,29 @@ struct Session {
 } // namespace
 
 int main(int argc, char** argv) {
-    if (argc != 2) {
-        std::fprintf(stderr, "Usage: aurum-angrylion-reference file.aurcap\n");
+    if (argc < 2 || argc > 3) {
+        std::fprintf(stderr, "Usage: aurum-angrylion-reference file.aurcap [output-prefix]\n");
         return 2;
     }
     try {
+        const bool emitLayers = argc == 3;
+        const std::string prefix = emitLayers ? argv[2] : std::string{};
+        std::ofstream manifest;
+        if (emitLayers) {
+            manifest.open(prefix + ".manifest", std::ios::binary | std::ios::trunc);
+            require(bool(manifest), "Cannot write reference manifest.");
+            manifest <<
+                "format=aurum-reference-layers/1\n"
+                "engine=angrylion-rdp-plus\n"
+                "commit=9c8b9ed3e7d7f00dff8bc872ccdd3fba1a3673fc\n"
+                "rdram=host-word-swapped:N64ByteAddress:whole\n"
+                "hidden=oneBytePer16BitPixel:coverage-compressed\n"
+                "tmem=4096:hardware-byte-layout\n"
+                "vi-color=RGBA8:R,G,B,A little-endian\n"
+                "vi-depth=RGBA8:grayscale-high-byte-of-Z16\n"
+                "vi-coverage=RGBA8:grayscale-Angrylion-coverage-encoding\n"
+                "counts=little-endian-uint64-triples:color-depth-coverage\n";
+        }
         std::ifstream input(argv[1], std::ios::binary);
         if (!input) throw std::runtime_error("Cannot open capture.");
         std::vector<aurum::capture::Record> records;
@@ -190,7 +229,10 @@ int main(int argc, char** argv) {
         session.configure();
         for (const auto& record : records) {
             if (record.type == aurum::capture::kRecordRDP) session.submission(record);
-            else if (record.type == aurum::capture::kRecordVI) session.video(record);
+            else if (record.type == aurum::capture::kRecordVI) {
+                session.video(record);
+                session.captureFrame();
+            }
         }
 
         uint64_t writtenWords = 0;
@@ -198,9 +240,40 @@ int main(int argc, char** argv) {
             const uint16_t value = uint16_t(session.rdram[i + 1]) | uint16_t(session.rdram[i]) << 8;
             if (value) ++writtenWords;
         }
-        std::printf("{\"engine\":\"angrylion-rdp-plus\",\"commit\":\"9c8b9ed3e7d7f00dff8bc872ccdd3fba1a3673fc\",\"records\":%zu,\"frames\":%llu,\"invalidFrames\":%llu,\"width\":%u,\"height\":%u,\"nonzero16\":%llu}\n",
+        if (emitLayers) {
+            const auto writeLayer = [&](const char* suffix, const void* bytes, size_t size) {
+                std::ofstream output(prefix + suffix, std::ios::binary | std::ios::trunc);
+                require(bool(output), "Cannot write reference layer.");
+                output.write(static_cast<const char*>(bytes), static_cast<std::streamsize>(size));
+            };
+            writeLayer(".rdram", session.rdram.data(), session.rdram.size());
+            writeLayer(".tmem", n64video_tmem(), 0x1000);
+            writeLayer(".hidden", n64video_hidden_rdram(), session.rdram.size() / 2);
+            std::vector<uint8_t> littleEndianCounts;
+            for (size_t i = 0; i < session.colorLayers.size(); ++i) {
+                const std::string index = std::to_string(i);
+                const size_t colorSize = session.colorLayers[i].size();
+                const size_t depthSize = session.depthLayers[i].size();
+                const size_t coverageSize = session.coverageLayers[i].size();
+                appendLE(littleEndianCounts, colorSize);
+                appendLE(littleEndianCounts, depthSize);
+                appendLE(littleEndianCounts, coverageSize);
+                if (!session.colorLayers[i].empty())
+                    writeLayer((".vi-color-" + index + ".rgba8").c_str(),
+                               session.colorLayers[i].data(), session.colorLayers[i].size() * 4);
+                if (!session.depthLayers[i].empty())
+                    writeLayer((".vi-depth-" + index + ".rgba8").c_str(),
+                               session.depthLayers[i].data(), session.depthLayers[i].size() * 4);
+                if (!session.coverageLayers[i].empty())
+                    writeLayer((".vi-coverage-" + index + ".rgba8").c_str(),
+                               session.coverageLayers[i].data(), session.coverageLayers[i].size() * 4);
+            }
+            writeLayer(".counts", littleEndianCounts.data(), littleEndianCounts.size());
+        }
+
+        std::printf("{\"engine\":\"angrylion-rdp-plus\",\"commit\":\"9c8b9ed3e7d7f00dff8bc872ccdd3fba1a3673fc\",\"records\":%zu,\"frames\":%llu,\"invalidFrames\":%llu,\"width\":%u,\"height\":%u,\"nonzero16\":%llu,\"layers\":%s}\n",
                     records.size(), session.frames, session.invalidFrames,
-                    session.width, session.height, writtenWords);
+                    session.width, session.height, writtenWords, emitLayers ? "true" : "false");
         return 0;
     } catch (const std::exception& error) {
         std::fprintf(stderr, "aborted: %s\n", error.what());

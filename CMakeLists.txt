@@ -45,7 +45,7 @@ target_link_libraries(aurum-capture-tests PRIVATE aurum-capture)
 add_executable(aurum-aurcap-replay Sources/AurumRDP/AurcapReplay.cpp)
 target_link_libraries(aurum-aurcap-replay PRIVATE aurum-capture aurum-rdp-decode)
 add_library(angrylion-core STATIC
-    third_party/angrylion-rdp-plus/src/core/n64video.c
+    Sources/AurumRDP/AngrylionCore.c
     third_party/angrylion-rdp-plus/src/core/parallel.cpp)
 target_include_directories(angrylion-core PUBLIC third_party/angrylion-rdp-plus/src)
 target_compile_options(angrylion-core PRIVATE -Wno-switch)
