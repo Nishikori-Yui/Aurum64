@@ -139,9 +139,15 @@ struct Session {
         const uint32_t end = readLE32(record.payload.data() + 4);
         const uint32_t status = readLE32(record.payload.data() + 8);
         const uint32_t xbus = readLE32(record.payload.data() + 12);
-        require(end >= start && end <= rdram.size(),
-                "RDP submission range is outside captured RDRAM.");
-        require((end - start) % 4 == 0, "RDP submission range is not word aligned.");
+        require(end >= start && (end - start) % 4 == 0,
+                "RDP submission range is invalid.");
+        const uint32_t range = end - start;
+        require(record.payload.size() - 16 == range,
+                "RDP submission payload does not match its address range.");
+        if (xbus)
+            require(range <= dmem.size(), "XBUS RDP range is too large.");
+        else
+            require(end <= rdram.size(), "RDP submission range is outside captured RDRAM.");
         dpRegisters[DP_START] = start;
         dpRegisters[DP_CURRENT] = start;
         dpRegisters[DP_END] = end;
@@ -151,13 +157,15 @@ struct Session {
             const size_t payloadOffset = 16 + (address - start);
             const uint32_t word = readBE32(record.payload.data() + payloadOffset);
             if (xbus) {
-                require(address <= dmem.size() - 4, "XBUS RDP word is outside DMEM.");
+                const uint32_t dmemAddress = address & 0xfff;
+                require(dmemAddress <= dmem.size() - 4, "XBUS RDP word is outside DMEM.");
+                std::copy_n(reinterpret_cast<const uint8_t*>(&word), 4,
+                            dmem.begin() + dmemAddress);
             } else {
                 require(address <= rdram.size() - 4, "RDP word is outside RDRAM.");
+                std::copy_n(reinterpret_cast<const uint8_t*>(&word), 4,
+                            rdram.begin() + address);
             }
-            auto& destination = xbus ? dmem : rdram;
-            std::copy_n(reinterpret_cast<const uint8_t*>(&word), 4,
-                        destination.begin() + address);
         }
         n64video_process_list();
         checkpoint("rdp", record.sequence, submissions, 0, 0);

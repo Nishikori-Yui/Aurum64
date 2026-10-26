@@ -74,6 +74,21 @@ int main() {
         std::istringstream limitedInput(bytes);
         require(!aurum::capture::read(limitedInput, decoded, error, 32), "Reader size limit ignored");
 
+        // Optional chunks are skipped semantically but still count toward the
+        // capture's declared total-size budget.
+        std::vector<Record> optionalRecords{
+            {kRecordOptional | 0x1234u, 1, std::vector<uint8_t>(8, 7)},
+            {kRecordOptional | 0x1234u, 2, std::vector<uint8_t>(8, 9)}};
+        std::ostringstream optionalOutput;
+        require(aurum::capture::write(optionalOutput, optionalRecords, error), error);
+        std::string optionalBytes = optionalOutput.str();
+        optionalBytes[20] = 64; // declared limit = 64 bytes; actual file is larger
+        optionalBytes[21] = optionalBytes[22] = optionalBytes[23] = 0;
+        for (unsigned i = 24; i < 28; ++i) optionalBytes[i] = 0;
+        std::istringstream optionalInput(optionalBytes);
+        require(!aurum::capture::read(optionalInput, decoded, error),
+                "Optional chunks bypassed the declared capture size limit");
+
         const std::vector<Record> nonMonotonic{{1, 2, {1}}, {2, 2, {2}}};
         std::ostringstream invalidOutput;
         require(!aurum::capture::write(invalidOutput, nonMonotonic, error),

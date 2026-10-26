@@ -58,6 +58,69 @@ scalar_counts = struct.unpack_from("<3Q", (replay_dir / "fill.counts").read_byte
 assert scalar_counts[0] == 205 * 240, scalar_counts
 assert (replay_dir / "fill.rdram").stat().st_size == 8 * 1024 * 1024
 assert (replay_dir / "fill.vi-color-7.rgba8").stat().st_size == 205 * 240 * 4
+
+# Rebuild a validly checksummed capture whose RDP submission metadata claims
+# more bytes than its payload contains. Both replay executables must reject it
+# before indexing into the command payload.
+capture_bytes = bytearray((tests / "fill.aurcap").read_bytes())
+cursor = 32
+malformed_chunks = []
+while cursor < len(capture_bytes):
+    chunk_type, chunk_length = struct.unpack_from("<II", capture_bytes, cursor)
+    chunk = bytearray(capture_bytes[cursor:cursor + 24 + chunk_length])
+    payload = bytearray(chunk[24:])
+    if chunk_type == 3:
+        payload = payload[:-4]
+        struct.pack_into("<I", chunk, 4, len(payload))
+        checksum = 2166136261
+        for value in payload:
+            checksum = ((checksum ^ value) * 16777619) & 0xffffffff
+        struct.pack_into("<I", chunk, 16, checksum)
+        chunk = chunk[:24] + payload
+        malformed_chunks.append(chunk)
+    else:
+        malformed_chunks.append(chunk)
+    cursor += 24 + chunk_length
+assert malformed_chunks and len(malformed_chunks[0])
+malformed_capture = tests / "bad-rdp-range.aurcap"
+malformed_capture.write_bytes(capture_bytes[:32] + b"".join(malformed_chunks))
+for executable in ("aurum-aurcap-replay", "aurum-angrylion-reference"):
+    rejected = subprocess.run([str(root / ".build/native" / executable), malformed_capture],
+                              capture_output=True, text=True, timeout=30)
+    assert rejected.returncode != 0, f"{executable} accepted mismatched RDP payload length"
+
+# Move the known-good RDP words to an XBUS interval crossing the 4 KiB DMEM
+# boundary. The reference backend must apply the documented 0xfff wrap.
+xbus_chunks = []
+capture_bytes = bytearray((tests / "fill.aurcap").read_bytes())
+cursor = 32
+while cursor < len(capture_bytes):
+    _, chunk_length = struct.unpack_from("<II", capture_bytes, cursor)
+    chunk = bytearray(capture_bytes[cursor:cursor + 24 + chunk_length])
+    if struct.unpack_from("<I", chunk)[0] == 3:
+        struct.pack_into("<I", chunk, 24, 0xFD8)
+        struct.pack_into("<I", chunk, 28, 0x1008)
+        struct.pack_into("<I", chunk, 36, 1)
+        payload = chunk[24:]
+        checksum = 2166136261
+        for value in payload:
+            checksum = ((checksum ^ value) * 16777619) & 0xffffffff
+        struct.pack_into("<I", chunk, 16, checksum)
+        xbus_chunks.append(chunk)
+    else:
+        xbus_chunks.append(chunk)
+    cursor += 24 + chunk_length
+xbus_capture = tests / "xbus-wrap.aurcap"
+xbus_capture.write_bytes(capture_bytes[:32] + b"".join(xbus_chunks))
+xbus_reference = tests / "xbus-reference/fill"
+xbus_actual = tests / "xbus-actual/fill"
+xbus_reference.parent.mkdir(exist_ok=True)
+xbus_actual.parent.mkdir(exist_ok=True)
+for executable, prefix in (("aurum-angrylion-reference", xbus_reference),
+                           ("aurum-aurcap-replay", xbus_actual)):
+    run([root / ".build/native" / executable, xbus_capture, prefix])
+run([root / ".build/native/aurum-reference-diff", xbus_reference, xbus_actual, xbus_capture])
+
 reference = subprocess.run([str(root / ".build/native/aurum-angrylion-reference"),
                             tests / "fill.aurcap"], capture_output=True, text=True, timeout=30)
 if reference.returncode:
@@ -93,6 +156,15 @@ assert (reference_dir / "fill.vi-coverage-7.rgba8").stat().st_size == 205 * 240 
 print(layer.stdout, end="")
 run([root / ".build/native/aurum-reference-diff", reference_dir / "fill",
      replay_dir / "fill", tests / "fill.aurcap"])
+with tempfile.TemporaryDirectory(prefix="aurum-missing-layer-") as temp:
+    missing = pathlib.Path(temp) / "actual"
+    shutil.copytree(reference_dir / "actual", missing)
+    (missing / "fill.rdram").unlink()
+    absent = subprocess.run([str(root / ".build/native/aurum-reference-diff"),
+                             reference_dir / "fill", missing / "fill", tests / "fill.aurcap"],
+                            capture_output=True, text=True, timeout=30)
+    assert absent.returncode == 1 and '"firstDifference":"layer-presence"' in absent.stdout, \
+        "Reference diff accepted a missing required layer"
 fixtures = tests / "fixtures"
 run([sys.executable, root / "scripts/make_reference_fixtures.py", fixtures])
 for fixture in ("matrix", "boundary4", "boundary8", "texture", "texture_stride",

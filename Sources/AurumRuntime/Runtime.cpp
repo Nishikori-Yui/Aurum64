@@ -163,12 +163,19 @@ void run(std::string rom, std::string frameworks, std::string resources, std::st
 }
 int aur_start(const char* rom, const char* frameworks, const char* resources, const char* data, uint64_t frameLimit) {
     if (!rom || !*rom || !frameworks || !*frameworks || !resources || !*resources || !data || !*data) return 0;
+    bool reserved = false;
+    try {
+    // Own all caller buffers before reserving the singleton. Any allocation or
+    // thread-creation failure must be translated to the C ABI, not escape into
+    // Swift or a plugin caller as a C++ exception.
+    std::string ownedRom(rom), ownedFrameworks(frameworks), ownedResources(resources), ownedData(data);
     {
         std::lock_guard lock(mutex);
         if (snapshot.state != AUR_STOPPED && snapshot.state != AUR_FAILED) return 0;
         // Reserve the runtime before joining a failed worker. This prevents a
         // concurrent caller from trying to join or replace the same thread.
         snapshot.state = AUR_STARTING;
+        reserved = true;
     }
     // A failed session can publish AUR_FAILED before its worker has finished
     // unloading the core and plugins. Reap that worker before resetting the
@@ -191,9 +198,30 @@ int aur_start(const char* rom, const char* frameworks, const char* resources, co
     }
     // Swift's temporary C strings expire when aur_start returns. Construct owned
     // strings here; std::thread would otherwise retain only the borrowed pointers.
-    worker = std::thread(run, std::string(rom), std::string(frameworks),
-                         std::string(resources), std::string(data));
+    worker = std::thread(run, std::move(ownedRom), std::move(ownedFrameworks),
+                         std::move(ownedResources), std::move(ownedData));
     return 1;
+    } catch (const std::exception& error) {
+        if (reserved) {
+            std::lock_guard lock(mutex);
+            failed = true;
+            snapshot.state = AUR_FAILED;
+            std::snprintf(snapshot.message, sizeof(snapshot.message),
+                          "Cannot start emulation: %s", error.what());
+            changed.notify_all();
+        }
+        return 0;
+    } catch (...) {
+        if (reserved) {
+            std::lock_guard lock(mutex);
+            failed = true;
+            snapshot.state = AUR_FAILED;
+            std::snprintf(snapshot.message, sizeof(snapshot.message),
+                          "Cannot start emulation: unknown startup error.");
+            changed.notify_all();
+        }
+        return 0;
+    }
 }
 void aur_command(int command) {
     std::lock_guard lock(mutex);

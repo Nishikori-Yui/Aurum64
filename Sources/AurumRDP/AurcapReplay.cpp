@@ -159,6 +159,18 @@ void replay(aurum::rdp::Decoder& decoder, Replay& output,
         } else if (record.type == aurum::capture::kRecordRDP) {
             if (record.payload.size() < 16 || (record.payload.size() - 16) % 4 != 0)
                 throw std::runtime_error("Invalid RDP submission payload.");
+            const uint32_t start = readLE(record.payload.data());
+            const uint32_t end = readLE(record.payload.data() + 4);
+            const uint32_t xbus = readLE(record.payload.data() + 12);
+            require(end >= start && (end - start) % 4 == 0,
+                    "Invalid RDP submission range.");
+            const uint32_t range = end - start;
+            require(record.payload.size() - 16 == range,
+                    "RDP submission payload does not match its address range.");
+            if (xbus)
+                require(range <= 4096, "XBUS RDP range is too large.");
+            else
+                require(end <= output.rdram.size(), "RDRAM RDP range is outside memory.");
             decoder.beginSubmission();
             for (size_t offset = 16; offset < record.payload.size(); offset += 4) {
                 const uint32_t words[1] = {readBE(record.payload.data() + offset)};
@@ -166,9 +178,6 @@ void replay(aurum::rdp::Decoder& decoder, Replay& output,
             }
             // Preserve the submitted command words at their DPC addresses so raw RDRAM
             // comparisons include the exact buffered stream, as the reference replay does.
-            const uint32_t start = readLE(record.payload.data());
-            const uint32_t end = readLE(record.payload.data() + 4);
-            const uint32_t xbus = readLE(record.payload.data() + 12);
             if (!xbus && end >= start && end <= output.rdram.size() &&
                 record.payload.size() >= 16 + (end - start)) {
                 for (uint32_t address = start; address < end; address += 4) {

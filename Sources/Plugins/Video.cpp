@@ -22,6 +22,9 @@ std::vector<aurum::capture::Record> captureRecords;
 uint64_t captureSequence = 0;
 uint64_t captureBytes = 0, captureMaxBytes = 0, captureMaxVI = 0, captureVI = 0;
 bool captureStopped = false;
+constexpr uint64_t kCaptureHeaderBytes = 32;
+constexpr uint64_t kCaptureChunkHeaderBytes = 24;
+constexpr uint64_t kCaptureEndReserve = kCaptureChunkHeaderBytes + 8 + sizeof("byte limit") - 1;
 void appendLE(std::vector<uint8_t>& payload, uint32_t value) {
     for (unsigned i = 0; i < 4; ++i) payload.push_back(uint8_t(value >> (i * 8)));
 }
@@ -64,16 +67,19 @@ void finishCapture(const char* reason) {
 }
 bool captureAllows(uint64_t additionalBytes) {
     if (capturePath.empty() || captureStopped) return false;
-    if (captureMaxBytes && captureBytes + additionalBytes > captureMaxBytes) {
+    const uint64_t limit = captureMaxBytes
+        ? std::min(captureMaxBytes, aurum::capture::kMaxCaptureBytes)
+        : aurum::capture::kMaxCaptureBytes;
+    if (captureBytes > limit || additionalBytes > limit - captureBytes ||
+        kCaptureEndReserve > limit - captureBytes - additionalBytes) {
         finishCapture("byte limit");
         return false;
     }
     return true;
 }
 void appendCapture(aurum::capture::Record record) {
-    constexpr uint64_t kChunkOverhead = 24;
-    if (!captureAllows(record.payload.size() + kChunkOverhead)) return;
-    captureBytes += record.payload.size() + kChunkOverhead;
+    if (!captureAllows(record.payload.size() + kCaptureChunkHeaderBytes)) return;
+    captureBytes += record.payload.size() + kCaptureChunkHeaderBytes;
     captureRecords.push_back(std::move(record));
 }
 uint64_t environmentLimit(const char* name) {
@@ -101,10 +107,16 @@ EXPORT int CALL RomOpen() {
         std::vector<uint8_t> payload;
         appendLE(payload, size);
         appendLE(payload, 0);
-        captureBytes = 32 + payload.size() + 24;
         captureMaxBytes = environmentLimit("AURUM_AURCAP_MAX_BYTES");
         captureMaxVI = environmentLimit("AURUM_AURCAP_MAX_VI");
         captureVI = 0; captureStopped = false;
+        captureBytes = kCaptureHeaderBytes;
+        constexpr uint64_t minimumCaptureBytes = kCaptureHeaderBytes +
+            kCaptureChunkHeaderBytes + 8 + kCaptureEndReserve;
+        if (captureMaxBytes && captureMaxBytes < minimumCaptureBytes) {
+            capturePath.clear();
+            aur_fail("AURUM_AURCAP_MAX_BYTES is too small for a valid capture.");
+        }
         appendCapture({aurum::capture::kRecordInitial, captureSequence++, std::move(payload)});
     }
     decoder.fill = [](const aurum::rdp::Fill& fill) {
