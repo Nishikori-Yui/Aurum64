@@ -365,15 +365,15 @@ sampling, IA/I/YUV, non-RGBA16 TLUT, filtering/LOD, triangles and the combiner/
 blender/depth/coverage pipeline remain unfinished. No commercial game has been
 validated, and the emulator is not yet at a playable-game stage.
 
-# IA8/I8 point-fetch decode - 2026-10-26
+# IA8/IA16/I8 point-fetch decode - 2026-10-26
 
-The isolated point sampler now reads IA8 and I8 from TMEM in addition to the
-previous RGBA16/RGBA32 subset. This was derived from the format layouts and
-validated against independently generated Angrylion TMEM layers from the
-original `texture_ia8` and `texture_i8` captures. The test visits all 16x4
-texels in each fixture, including odd-row byte ordering, then checks decoded
-channels. IA8 expands its four-bit intensity and alpha nibbles by replication;
-I8 replicates intensity to RGB and supplies opaque alpha in the sampler value.
+The isolated point sampler now reads IA8, IA16 and I8 from TMEM in addition to
+the previous RGBA16/RGBA32 subset. This was derived from the format layouts and
+validated against independently generated Angrylion TMEM layers from original
+fixtures. Tests visit every texel, including odd-row byte ordering, then check
+decoded channels. IA8 expands its four-bit intensity and alpha nibbles by
+replication; IA16 uses one byte each for intensity and alpha; I8 replicates
+intensity to RGB and supplies opaque alpha in the sampler value.
 
 This does **not** add IA8/I8 production rendering: the Metal copy-cycle path
 still rejects these formats, and point-cycle sampling is not wired into the RDP
@@ -385,7 +385,7 @@ production dispatch.
 
 | Check | Result |
 | --- | --- |
-| Reference TMEM fetch | All 64 IA8 and 64 I8 texels match the independent source pattern and odd-row layout |
+| Reference TMEM fetch | All 64 IA8, 64 I8 and 32 IA16 texels match independent source patterns and odd-row layout |
 | Bounds | IA8 fetch beyond the 4 KiB TMEM store is rejected |
 | Build | Fresh `.build/ia8-validation` Release build of the sampler and reference tools passed |
 | Fetch test | `aurum-texture-fetch-tests .build/ia8-validation/fixtures` passed with reference layers |

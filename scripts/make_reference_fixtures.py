@@ -335,6 +335,20 @@ def texture_8bit_fixture(fmt: int) -> bytes:
     return serialize(records)
 
 
+def texture_ia16_fixture() -> bytes:
+    """A single IA16 tile with distinct intensity and alpha bytes."""
+    width, height = 8, 4
+    texels = bytearray()
+    for y in range(height):
+        for x in range(width):
+            texels += bytes((0x20 + y * 8 + x, 0x80 + y * 8 + x))
+    words = (set_texture_image(3, 2, width, TEXTURE_SRC) +
+             set_tile(0, 3, 2, width // 4, 0) +
+             load_tile(0, 0, 0, (width - 1) * 4, (height - 1) * 4) + TEXTURE_SYNC)
+    return serialize([initial(8 << 20), memory(2, TEXTURE_SRC, bytes(texels)),
+                      rdp(3, 0x100000, words), vi(4, 2, TEXTURE_FB, 64)])
+
+
 def texture_8bit_offset_fixture() -> bytes:
     """CI8 with a narrower image and a non-zero tmem base, to move the row base."""
     width = 8
@@ -558,6 +572,7 @@ def write_all(destination: pathlib.Path) -> None:
         "texture_ci8.aurcap": texture_8bit_fixture(2),
         "texture_ia8.aurcap": texture_8bit_fixture(3),
         "texture_i8.aurcap": texture_8bit_fixture(4),
+        "texture_ia16.aurcap": texture_ia16_fixture(),
         "texture_8bit_offset.aurcap": texture_8bit_offset_fixture(),
         "sampler_rgba16.aurcap": sampler_rgba16_fixture(),
         "sampler_rgba32.aurcap": sampler_rgba32_fixture(),

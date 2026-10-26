@@ -224,7 +224,7 @@ for fixture in ("matrix", "boundary4", "boundary8", "texture", "texture_stride",
                 "texture_block", "texture_tlut", "texture_rgba32",
                 "texture_rgba32_offset", "texture_memory_record",
                 "texture_memory_record_fill", "texture_ci8", "texture_ia8",
-                "texture_i8", "texture_8bit_offset",
+                "texture_i8", "texture_ia16", "texture_8bit_offset",
                 "sampler_rgba16", "sampler_rgba32"):
     fixture_reference = fixtures / f"{fixture}.ref"
     fixture_actual = fixtures / f"{fixture}.actual"

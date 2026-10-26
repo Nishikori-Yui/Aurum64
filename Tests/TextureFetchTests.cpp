@@ -108,6 +108,22 @@ int main(int argc, char** argv) {
             };
             check8Bit("ia8", 3);
             check8Bit("i8", 4);
+
+            const auto storeIA16 = loadReferenceTmem(
+                dir + "/texture_ia16.ref/texture_ia16.tmem");
+            TileDescriptor ia16{3, 2, 2, 0};
+            for (uint32_t t = 0; t < 4; ++t) {
+                for (uint32_t s = 0; s < 8; ++s) {
+                    Texel texel;
+                    require(sampler.fetch(storeIA16, ia16, s, t, texel),
+                            "IA16 reference TMEM fetch failed");
+                    require(texel.r == 0x20 + t * 8 + s &&
+                            texel.g == 0x20 + t * 8 + s &&
+                            texel.b == 0x20 + t * 8 + s &&
+                            texel.a == 0x80 + t * 8 + s,
+                            "IA16 reference TMEM channel decode differs");
+                }
+            }
         }
 
         // A fetch has to agree with the uploader that produced the TMEM, so the
@@ -141,8 +157,8 @@ int main(int argc, char** argv) {
                     "8-bit fetch accepted");
             require(!sampler.fetch(store, TileDescriptor{2, 0, 1, 0}, 0, 0, texel),
                     "4-bit fetch accepted");
-            require(!sampler.fetch(store, TileDescriptor{3, 2, 1, 0}, 0, 0, texel),
-                    "IA16 interpreted as RGBA");
+            require(!sampler.fetch(store, TileDescriptor{3, 3, 1, 0}, 0, 0, texel),
+                    "Unsupported IA32 format accepted");
             require(!sampler.fetch(store, TileDescriptor{0, 2, 2, 0}, UINT32_MAX, 0, texel),
                     "Overflowing S aliased TMEM");
             require(!sampler.fetch(store, TileDescriptor{0, 2, 2, 0}, 0, 1u << 31, texel),

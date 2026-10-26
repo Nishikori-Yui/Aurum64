@@ -42,6 +42,8 @@ public:
             return fetchIA8(tmem, tile, s, t, out);
         if (tile.format == 4 && tile.size == 1)
             return fetchI8(tmem, tile, s, t, out);
+        if (tile.format == 3 && tile.size == 2)
+            return fetchIA16(tmem, tile, s, t, out);
         if (tile.format != 0) return false;
         switch (tile.size) {
         case 2: return fetchRGBA16(tmem, tile, s, t, out);
@@ -64,6 +66,15 @@ public:
     }
 
 private:
+    bool fetchIA16(const aurum::tmem::Store& tmem, const TileDescriptor& tile,
+                   uint32_t s, uint32_t t, Texel& out) const {
+        uint32_t index = 0;
+        if (!wordIndex(tile, s, t, index)) return false;
+        const uint32_t value = tmem.readHwWord(index);
+        out = {value >> 8, value >> 8, value >> 8, value & 0xffu};
+        return true;
+    }
+
     bool fetchIA8(const aurum::tmem::Store& tmem, const TileDescriptor& tile,
                   uint32_t s, uint32_t t, Texel& out) const {
         uint32_t address = 0;
