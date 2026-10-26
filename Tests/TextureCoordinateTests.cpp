@@ -20,8 +20,9 @@ uint32_t mode(uint32_t shift, uint32_t mask, uint32_t flags) {
 Request makeCase(uint32_t sl, uint32_t sh, uint32_t tl, uint32_t th,
                  uint32_t smode, uint32_t tmode, int32_t s, int32_t t,
                  uint32_t tile = 0, uint32_t size = 2,
-                 uint32_t line = 2, uint32_t tmem = 0) {
-    return {0xf5000000u | size << 19 | line << 9 | tmem,
+                 uint32_t line = 2, uint32_t tmem = 0,
+                 uint32_t format = 0) {
+    return {0xf5000000u | format << 21 | size << 19 | line << 9 | tmem,
             tile << 24 | smode | tmode << 10,
             0xf2000000u | sl << 12 | tl, tile << 24 | sh << 12 | th,
             uint32_t(s), uint32_t(t)};
@@ -65,6 +66,19 @@ void generate(const char* path) {
         emit(makeCase(rng() & 4095, rng() & 4095, rng() & 4095, rng() & 4095,
                       smode, tmode, signedCoordinate(rng()), signedCoordinate(rng()),
                       rng() & 7, 2 + (rng() & 1), rng() & 31, rng() & 255));
+    }
+    // Query the reference's actual color-channel fetch for IA8, IA16 and I8
+    // against a deterministic TMEM pattern, covering both row parities.
+    for (const auto [format, size, width, height, line] : {
+             std::array<uint32_t, 5>{3, 1, 16, 4, 2},
+             std::array<uint32_t, 5>{3, 2, 8, 4, 2},
+             std::array<uint32_t, 5>{4, 1, 16, 4, 2}}) {
+        for (uint32_t t = 0; t < height; ++t)
+            for (uint32_t s = 0; s < width; ++s)
+                emit(makeCase(0, (width - 1) * 4, 0, (height - 1) * 4,
+                              mode(0, 0, 1), mode(0, 0, 1),
+                              int32_t(s * 32), int32_t(t * 32), 0, size, line, 0,
+                              format));
     }
     out.flush();
     require(bool(out) && count <= kMaxCases, "Cannot finish coordinate cases.");
@@ -119,7 +133,7 @@ void compare(const char* casesPath, const char* referencePath) {
     require(count != 0 && fetched > 10000 && !readWords(reference, expected),
             "Empty or extra coordinate reference data.");
     require(decoder.unsupported == count, "Coordinate tests concealed unsupported rectangles.");
-    std::printf("PASS: %zu point/copy coordinate cases, %zu RGBA point fetches "
+    std::printf("PASS: %zu point/copy coordinate cases, %zu reference texel fetches "
                 "against independent Angrylion process\n", count, fetched);
 }
 

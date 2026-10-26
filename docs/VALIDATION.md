@@ -368,12 +368,19 @@ validated, and the emulator is not yet at a playable-game stage.
 # IA8/IA16/I8 point-fetch decode - 2026-10-26
 
 The isolated point sampler now reads IA8, IA16 and I8 from TMEM in addition to
-the previous RGBA16/RGBA32 subset. This was derived from the format layouts and
-validated against independently generated Angrylion TMEM layers from original
-fixtures. Tests visit every texel, including odd-row byte ordering, then check
-decoded channels. IA8 expands its four-bit intensity and alpha nibbles by
-replication; IA16 uses one byte each for intensity and alpha; I8 replicates
-intensity to RGB and supplies opaque alpha in the sampler value.
+the previous RGBA16/RGBA32 subset. IA8, I8 and IA16 byte layouts are checked
+against independently generated Angrylion TMEM layers. A separate coordinate
+probe calls the pinned reference's actual texture fetch and compares all four
+channels against the sampler on a deterministic TMEM pattern. This directly
+verified that IA8 expands its intensity and alpha nibbles by replication,
+IA16 uses one byte each for intensity and alpha, and I8 replicates intensity
+to all four channels (including alpha).
+
+The first direct channel comparison caught an earlier false assumption: the
+sampler had set I8 alpha to 255 based on a common-format convention. Angrylion
+returned the intensity byte for alpha as well (the first probe sample returned
+`0xe6` rather than `0xff`), so the sampler and fixture expectation now use
+intensity for RGBA. The format remains out of the production draw path.
 
 This does **not** add IA8/I8 production rendering: the Metal copy-cycle path
 still rejects these formats, and point-cycle sampling is not wired into the RDP
@@ -386,8 +393,10 @@ production dispatch.
 | Check | Result |
 | --- | --- |
 | Reference TMEM fetch | All 64 IA8, 64 I8 and 32 IA16 texels match independent source patterns and odd-row layout |
+| Reference channel fetch | 64 IA8, 32 IA16 and 64 I8 point samples match Angrylion's actual RGBA texel output, including I8 alpha |
 | Bounds | IA8 fetch beyond the 4 KiB TMEM store is rejected |
-| Build | Fresh `.build/ia8-validation` Release build of the sampler and reference tools passed |
-| Fetch test | `aurum-texture-fetch-tests .build/ia8-validation/fixtures` passed with reference layers |
+| Build | Fresh `.build/ia-channel-validation` Release build passed |
+| CTest | 12/12 passed with Metal API Validation; includes independent coordinate and channel comparisons |
+| Fetch test | `aurum-texture-fetch-tests .build/ia-channel-validation/fixtures` passed with reference layers |
 
 No commercial game claim follows from this sampler-only milestone.

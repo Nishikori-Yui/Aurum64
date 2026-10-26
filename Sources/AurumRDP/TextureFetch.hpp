@@ -90,7 +90,7 @@ private:
         uint32_t address = 0;
         if (!byteAddress(tile, s, t, address)) return false;
         const uint32_t intensity = tmem.readByte(address);
-        out = {intensity, intensity, intensity, 255};
+        out = {intensity, intensity, intensity, intensity};
         return true;
     }
 

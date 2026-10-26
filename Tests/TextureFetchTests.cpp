@@ -99,7 +99,7 @@ int main(int argc, char** argv) {
                         const uint32_t intensity = format == 3
                             ? ((packed >> 4) & 15u) * 17u : packed;
                         const uint32_t alpha = format == 3
-                            ? (packed & 15u) * 17u : 255u;
+                            ? (packed & 15u) * 17u : intensity;
                         require(texel.r == intensity && texel.g == intensity &&
                                 texel.b == intensity && texel.a == alpha,
                                 "8-bit reference TMEM channel decode differs");

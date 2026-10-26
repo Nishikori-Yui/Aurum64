@@ -255,12 +255,16 @@ int main(int argc, char** argv) {
             size_t count = 0;
             while (readWords(input, request)) {
                 require(++count <= kMaxCases, "Too many coordinate probe cases.");
+                const uint32_t format = (request[0] >> 21) & 7;
+                const uint32_t size = (request[0] >> 19) & 3;
+                const bool supportedFetch =
+                    (format == 0 && (size == 2 || size == 3)) ||
+                    (format == 3 && (size == 1 || size == 2)) ||
+                    (format == 4 && size == 1);
                 require(((request[0] >> 24) & 63) == 0x35 &&
                         ((request[2] >> 24) & 63) == 0x32 &&
                         ((request[1] >> 24) & 7) == ((request[3] >> 24) & 7) &&
-                        ((request[0] >> 21) & 7) == 0 &&
-                        (((request[0] >> 19) & 3) == 2 ||
-                         ((request[0] >> 19) & 3) == 3),
+                        supportedFetch,
                         "Invalid coordinate probe tile commands.");
                 Response response{};
                 n64video_coordinate_probe(request.data(), response.data());
