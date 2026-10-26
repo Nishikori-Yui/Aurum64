@@ -1,0 +1,11 @@
+.DS_Store
+.build/
+build/
+dist/
+*.z64
+*.n64
+*.v64
+*.sav
+*.st[0-9]
+__pycache__/
+*.pyc
