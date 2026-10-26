@@ -85,6 +85,29 @@ int main(int argc, char** argv) {
                             "RGBA32 channel decode differs");
                 }
             }
+
+            const auto check8Bit = [&](const char* fixture, uint32_t format) {
+                const auto store = loadReferenceTmem(
+                    dir + "/texture_" + fixture + ".ref/texture_" + fixture + ".tmem");
+                TileDescriptor tile{format, 1, 2, 0};
+                for (uint32_t t = 0; t < 4; ++t) {
+                    for (uint32_t s = 0; s < 16; ++s) {
+                        Texel texel;
+                        require(sampler.fetch(store, tile, s, t, texel),
+                                "8-bit reference TMEM fetch failed");
+                        const uint32_t packed = 0x10 + t * 0x10 + s;
+                        const uint32_t intensity = format == 3
+                            ? ((packed >> 4) & 15u) * 17u : packed;
+                        const uint32_t alpha = format == 3
+                            ? (packed & 15u) * 17u : 255u;
+                        require(texel.r == intensity && texel.g == intensity &&
+                                texel.b == intensity && texel.a == alpha,
+                                "8-bit reference TMEM channel decode differs");
+                    }
+                }
+            };
+            check8Bit("ia8", 3);
+            check8Bit("i8", 4);
         }
 
         // A fetch has to agree with the uploader that produced the TMEM, so the
@@ -124,6 +147,8 @@ int main(int argc, char** argv) {
                     "Overflowing S aliased TMEM");
             require(!sampler.fetch(store, TileDescriptor{0, 2, 2, 0}, 0, 1u << 31, texel),
                     "Overflowing T aliased TMEM");
+            require(!sampler.fetch(store, TileDescriptor{3, 1, 0, 0}, 4096, 0, texel),
+                    "IA8 fetch wrapped beyond TMEM");
             // A row base outside the 9-bit unit field is rejected: tmem 511
             // with line 1 puts row 1 at unit 512.
             require(sampler.fetch(store, TileDescriptor{0, 2, 1, 511}, 0, 0,

@@ -48,6 +48,10 @@ CPU readback precede subsequent uploads, which allows a rendered framebuffer to
 become a texture source. Point-cycle indexed sampling, other TLUT types, other
 indexed formats and filtering remain unsupported.
 
+The isolated point-fetch helper also decodes IA8 and I8 from reference-verified
+TMEM layouts. This is a sampler/test capability only: those formats are not yet
+connected to Metal texture rectangles or the production RDP draw path.
+
 The MetalKit view uses the same compiled presentation shaders as the offscreen
 test. Its single shared texture is not updated until the previous GPU read has
 completed. Main-thread waits are an explicit temporary limitation, to be replaced

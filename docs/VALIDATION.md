@@ -364,3 +364,30 @@ for the CI4 copy interpretation; native 4-bit LoadTile upload, point-cycle CI
 sampling, IA/I/YUV, non-RGBA16 TLUT, filtering/LOD, triangles and the combiner/
 blender/depth/coverage pipeline remain unfinished. No commercial game has been
 validated, and the emulator is not yet at a playable-game stage.
+
+# IA8/I8 point-fetch decode - 2026-10-26
+
+The isolated point sampler now reads IA8 and I8 from TMEM in addition to the
+previous RGBA16/RGBA32 subset. This was derived from the format layouts and
+validated against independently generated Angrylion TMEM layers from the
+original `texture_ia8` and `texture_i8` captures. The test visits all 16x4
+texels in each fixture, including odd-row byte ordering, then checks decoded
+channels. IA8 expands its four-bit intensity and alpha nibbles by replication;
+I8 replicates intensity to RGB and supplies opaque alpha in the sampler value.
+
+This does **not** add IA8/I8 production rendering: the Metal copy-cycle path
+still rejects these formats, and point-cycle sampling is not wired into the RDP
+renderer. A preliminary hand-built copy capture was not suitable evidence for
+the framebuffer conversion rules, so no copy-path semantics were inferred from
+it. A future end-to-end implementation needs dedicated lane/address fixtures
+and independent reference comparisons before these formats are accepted by
+production dispatch.
+
+| Check | Result |
+| --- | --- |
+| Reference TMEM fetch | All 64 IA8 and 64 I8 texels match the independent source pattern and odd-row layout |
+| Bounds | IA8 fetch beyond the 4 KiB TMEM store is rejected |
+| Build | Fresh `.build/ia8-validation` Release build of the sampler and reference tools passed |
+| Fetch test | `aurum-texture-fetch-tests .build/ia8-validation/fixtures` passed with reference layers |
+
+No commercial game claim follows from this sampler-only milestone.

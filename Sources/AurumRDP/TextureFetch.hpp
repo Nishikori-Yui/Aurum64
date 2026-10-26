@@ -38,6 +38,10 @@ public:
     // false for combinations that are not modeled rather than approximating.
     bool fetch(const aurum::tmem::Store& tmem, const TileDescriptor& tile,
                uint32_t s, uint32_t t, Texel& out) const {
+        if (tile.format == 3 && tile.size == 1)
+            return fetchIA8(tmem, tile, s, t, out);
+        if (tile.format == 4 && tile.size == 1)
+            return fetchI8(tmem, tile, s, t, out);
         if (tile.format != 0) return false;
         switch (tile.size) {
         case 2: return fetchRGBA16(tmem, tile, s, t, out);
@@ -60,6 +64,36 @@ public:
     }
 
 private:
+    bool fetchIA8(const aurum::tmem::Store& tmem, const TileDescriptor& tile,
+                  uint32_t s, uint32_t t, Texel& out) const {
+        uint32_t address = 0;
+        if (!byteAddress(tile, s, t, address)) return false;
+        const uint32_t value = tmem.readByte(address);
+        const uint32_t intensity = ((value >> 4) & 15u) * 17u;
+        out = {intensity, intensity, intensity, (value & 15u) * 17u};
+        return true;
+    }
+
+    bool fetchI8(const aurum::tmem::Store& tmem, const TileDescriptor& tile,
+                 uint32_t s, uint32_t t, Texel& out) const {
+        uint32_t address = 0;
+        if (!byteAddress(tile, s, t, address)) return false;
+        const uint32_t intensity = tmem.readByte(address);
+        out = {intensity, intensity, intensity, 255};
+        return true;
+    }
+
+    bool byteAddress(const TileDescriptor& tile, uint32_t s, uint32_t t,
+                     uint32_t& address) const {
+        if (tile.line > 511 || tile.tmem > 511 || t > 255) return false;
+        const uint64_t row = uint64_t(tile.tmem) * 8 + uint64_t(tile.line) * 8 * t;
+        if (row >= aurum::tmem::Store::kBytes) return false;
+        const uint64_t index = row + (s ^ ((t & 1u) ? 7u : 3u));
+        if (index >= aurum::tmem::Store::kBytes) return false;
+        address = uint32_t(index);
+        return true;
+    }
+
     bool fetchRGBA16(const aurum::tmem::Store& tmem, const TileDescriptor& tile,
                      uint32_t s, uint32_t t, Texel& out) const {
         uint32_t index = 0;
