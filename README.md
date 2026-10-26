@@ -5,11 +5,12 @@ milestone integrates Mupen64Plus, a low-level CXD4 RSP, a native SwiftUI/AppKit
 shell, Core Audio, GameController and an independent Metal compute renderer.
 
 **This is an early emulator implementation, not a game-compatible release.**
-The renderer implements fill-cycle RGBA16/RGBA32 rectangles, restricted RGBA16
-copy-cycle texture rectangles and basic VI scanout. TMEM uploads and signed
-point/copy coordinates have independent reference tests. Triangles, filtered
-textures, combiner, blender, depth, coverage and accurate VI filters remain
-unfinished. The CPU uses the cached interpreter, not a JIT.
+The renderer implements fill-cycle RGBA16/RGBA32 rectangles, restricted
+RGBA16/CI4/CI8 copy-cycle texture rectangles with RGBA16 TLUT, and basic VI
+scanout. TMEM uploads and signed point/copy coordinates have independent
+reference tests. Triangles, filtered textures, combiner, blender, depth,
+coverage and accurate VI filters remain unfinished. The CPU uses the cached
+interpreter, not a JIT.
 There is no claim of real-time performance or commercial-game compatibility.
 
 ## Build and run
@@ -51,11 +52,12 @@ core but game-driven persistence still needs validation.
 - C++ RDP decoder: partial commands, triangle/rectangle command lengths,
   unsupported-command counters, fill/scissor bounds and invalid-input handling.
 - Metal: RGBA16/RGBA32 fills, 48 seeded randomized comparisons with our scalar
-  byte-address reference, 259 original RGBA16 copy draws compared with a separate
-  pinned reference process, VI color conversion/blanking and offscreen presentation.
+  byte-address reference, 391 original RGBA16/CI4/CI8 copy draws compared with a
+  separate pinned reference process, VI color conversion/blanking and offscreen presentation.
 - Original generated ROM: CPU boot without proprietary IPL3, RDP DMA, Metal
   rendering, a small scalar RSP program, silent AI DMA and exact full-frame pixels.
-  The texture variant also exercises production LoadTile/copy/alpha rejection.
+  Texture variants also exercise production LoadTile, RGBA16 TLUT upload, CI8
+  palette lookup, copy and alpha rejection.
 - Lifecycle: invalid ROM recovery, all three ROM byte orders, 4 MiB RDRAM, repeated sessions,
   input mailbox, pause/resume/reset, stop while paused and stop without VI.
 - Bundle relocation: smoke test outside the repository, actual dyld-load audit,
@@ -120,12 +122,13 @@ those remain explicit differential gaps rather than silently passing comparisons
 
 `aurum-metal-replay capture.aurcap output-prefix library.metallib` uses the
 production Metal fill and texture-copy renderer while retaining the diagnostic
-scalar VI-color export. Texture copy currently requires RGBA16 source/destination,
-copy cycle, integer rectangle/scissor edges and no perspective, TLUT or LOD.
-Alpha comparison uses the texel's one-bit alpha. Unsupported modes, wrapped
-addresses and unmodeled bank conflicts are rejected before any framebuffer write.
-Its CPU plan contains addresses; Metal fetches TMEM, tests alpha and writes the
-pixels. This is an initial synchronous implementation, with no performance claim.
+scalar VI-color export. Texture copy currently supports RGBA16 and CI4/CI8 with
+RGBA16 TLUT, copy cycle, integer rectangle/scissor edges and no perspective or
+LOD. Alpha comparison uses the fetched RGBA16 texel's one-bit alpha. Unsupported
+modes, wrapped addresses and unmodeled bank conflicts are rejected before any
+framebuffer write. Its CPU plan contains addresses; Metal fetches TMEM, performs
+the optional palette lookup and alpha test, then writes the pixels. This is an
+initial synchronous implementation, with no performance claim.
 
 ## Next milestones
 

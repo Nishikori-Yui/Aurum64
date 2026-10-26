@@ -59,14 +59,16 @@ bool Renderer::textureCopy(uint8_t* memory, size_t length, const TextureRect& re
                             length:words.size() * sizeof(words[0]) options:MTLResourceStorageModeShared];
         if (!texture || !plan) { error = "Cannot allocate texture copy buffers."; return false; }
         memcpy(p.ram.contents, memory, length);
-        const uint32_t alphaCompare = rect.otherModesLo & 1u;
+        const uint32_t copyOptions = (rect.otherModesLo & 1u) |
+            (rect.tileFormat == 2 ? 2u : 0u) | (rect.tileSize == 0 ? 4u : 0u) |
+            (((rect.tileModes >> 20) & 15u) << 8);
         id<MTLCommandBuffer> command = [p.queue commandBuffer];
         id<MTLComputeCommandEncoder> encoder = [command computeCommandEncoder];
         [encoder setComputePipelineState:p.copyPipeline];
         [encoder setBuffer:p.ram offset:0 atIndex:0];
         [encoder setBuffer:texture offset:0 atIndex:1];
         [encoder setBuffer:plan offset:0 atIndex:2];
-        [encoder setBytes:&alphaCompare length:sizeof(alphaCompare) atIndex:3];
+        [encoder setBytes:&copyOptions length:sizeof(copyOptions) atIndex:3];
         [encoder dispatchThreads:MTLSizeMake(words.size(), 1, 1)
           threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
         [encoder endEncoding];

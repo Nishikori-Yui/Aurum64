@@ -30,8 +30,7 @@ int main() {
                                                   0x1000 + i * 2, source[i]),
                     "RDRAM source setup");
 
-        // LoadTLUT places each entry in bank 0, repeated across the four
-        // hardware words of an 8-byte unit, matching the reference engine.
+        // Size-2 TLUT load descriptors leave 16-word gaps between entries.
         Uploader uploader;
         uploader.setTextureImage(0, 2, 4, 0x1000);
         uploader.setTile(2, 7);
@@ -46,18 +45,37 @@ int main() {
                 "unaligned TLUT bounds accepted");
         require(!uploader.loadTlut(rdram.data(), rdram.size(), 2, 0, 0, 12, 4),
                 "multi-row TLUT accepted");
-        // A TLUT lives entirely in bank 0, whose 1024 hardware words end at
-        // tmem unit 256. Four entries span 64 words, so unit 240 is the last
-        // base that fits and unit 241 would spill into bank 1.
-        uploader.setTile(2, 240);
+        // Uploads can target either half. This size-2 descriptor places the
+        // final entry at 4*499 + 3*16 = 2044, exactly the last four words.
+        uploader.setTile(2, 499);
         require(uploader.loadTlut(rdram.data(), rdram.size(), 2, 0, 0, 12, 0),
-                "TLUT ending at the last bank-0 word rejected");
-        uploader.setTile(2, 241);
+                "TLUT ending at the last TMEM word rejected");
+        uploader.setTile(2, 500);
         require(!uploader.loadTlut(rdram.data(), rdram.size(), 2, 0, 0, 12, 0),
-                "TLUT spilling into bank 1 accepted");
+                "TLUT exceeding TMEM accepted");
         uploader.setTile(2, 511);
         require(!uploader.loadTlut(rdram.data(), rdram.size(), 2, 0, 0, 12, 0),
                 "TLUT destination overflow accepted");
+        Uploader palette;
+        for (uint32_t entry = 0; entry < 256; ++entry)
+            require(aurum::memory::writeHalfword(rdram.data(), rdram.size(),
+                                                0x1400 + entry * 2, 0x8100 + entry),
+                    "Palette source setup");
+        aurum::rdp::TextureLoad load;
+        load.opcode = 0x30; load.tile = 7; load.tileSize = 0; load.tileTmem = 256;
+        load.tiSize = 2; load.tiWidth = 256; load.tiAddress = 0x1400; load.sh = 255 * 4;
+        require(palette.load(rdram.data(), rdram.size(), load),
+                "Conventional size-0 descriptor / size-2 source palette rejected");
+        for (uint32_t entry = 0; entry < 256; ++entry)
+            for (uint32_t bank = 0; bank < 4; ++bank)
+                require(palette.store().readHwWord(1024 + entry * 4 + bank) == 0x8100 + entry,
+                        "Full upper-half palette replication differs");
+        std::array<uint8_t, 4096> beforePalette{}, afterPalette{};
+        palette.store().copyBytes(beforePalette);
+        load.tileTmem = 257;
+        require(!palette.load(rdram.data(), rdram.size(), load), "Wrapped palette accepted");
+        palette.store().copyBytes(afterPalette);
+        require(beforePalette == afterPalette, "Rejected palette upload was not atomic");
 
         // LoadTile: tmem and line count 8-byte units, odd rows swap the dword
         // pair, and every index carries the host word swap.

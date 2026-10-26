@@ -7,15 +7,23 @@ struct CopyWord { uint word, high, low; };
 
 kernel void textureCopy(device uint* ram [[buffer(0)]], device const ushort* tmem [[buffer(1)]],
                         device const CopyWord* plan [[buffer(2)]],
-                        constant uint& alphaCompare [[buffer(3)]],
+                        constant uint& options [[buffer(3)]],
                         uint index [[thread_position_in_grid]]) {
     CopyWord item = plan[index];
     uint value = ram[item.word];
     for (uint lane = 0; lane < 2; ++lane) {
         uint source = lane == 0 ? item.high : item.low;
         if (source == 0xffffffffu) continue;
-        uint texel = tmem[source];
-        if (alphaCompare && !(texel & 1u)) continue;
+        uint texel;
+        if (options & 2u) {
+            device const uchar* bytes = reinterpret_cast<device const uchar*>(tmem);
+            uint entry = bytes[source & 4095u];
+            if (options & 4u)
+                entry = ((entry >> ((source & (1u << 14)) ? 0 : 4)) & 15u) |
+                        (((options >> 8) & 15u) << 4);
+            texel = tmem[1024u + entry * 4u + ((source >> 12) & 3u)];
+        } else texel = tmem[source];
+        if ((options & 1u) && !(texel & 1u)) continue;
         uint shift = lane == 0 ? 16 : 0;
         value = (value & ~(65535u << shift)) | (texel << shift);
     }

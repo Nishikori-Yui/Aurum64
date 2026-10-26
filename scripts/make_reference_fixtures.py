@@ -483,6 +483,64 @@ def texture_copy_feedback_fixture() -> bytes:
                       rdp(3, 0x100000, words), vi(4, 2, TEXTURE_FB, 16)])
 
 
+def texture_indexed_fixture(bits: int, matrix: bool = False, bank_probe: bool = False) -> bytes:
+    """CI4/8 copy with a complete original RGBA16 palette in upper TMEM."""
+    width, height = 32, 8
+    palette_address = TEXTURE_SRC + 0x1000
+    palette = b"".join(struct.pack(">H", ((i * 7 & 31) << 11) |
+                                  ((i * 3 & 31) << 6) | ((i >> 3 & 31) << 1) |
+                                  (i & 1)) for i in range(256))
+    source = bytes((i * 13 + i // width) & 255 for i in range(width * height))
+    packed_width = width if bits == 8 else width // 2
+    if bits == 4:
+        source = bytes((((i * 2) & 15) << 4) | ((i * 2 + 1) & 15)
+                       for i in range(packed_width * height))
+    records = [initial(4 << 20), memory(2, TEXTURE_SRC, source),
+               memory(3, palette_address, palette),
+               memory(4, TEXTURE_FB, b"\x6b\x5a" * (8192 * (64 if matrix else 1) // 2))]
+    sequence = 5
+
+    def submit(words):
+        nonlocal sequence
+        records.append(rdp(sequence, 0x100000 + (sequence - 5) * 0x100, words))
+        sequence += 1
+
+    # A size-0 load tile packs four replicated halfwords per palette entry.
+    submit(set_image(2, TEXTURE_FB, 63) +
+           set_texture_image(0, 2, 256, palette_address) + set_tile(7, 0, 0, 0, 256) +
+           load_tlut(7, 0, 0, 255 * 4, 0) +
+           set_texture_image(2, 1, packed_width, TEXTURE_SRC) +
+           set_tile(0, 2, 1, packed_width // 8, 16) +
+           load_tile(0, 0, 0, (packed_width - 1) * 4, (height - 1) * 4))
+    if bank_probe:
+        # Break palette replication deliberately. A copy qword must read the
+        # corresponding palette port for each lane, not reuse a decoded color.
+        submit(set_texture_image(0, 2, 16, palette_address) + set_tile(6, 0, 2, 4, 256) +
+               load_tile(6, 0, 0, 15 * 4, 0))
+    rng = random.Random(0x64004 + bits)
+    for index in range(64 if matrix else 1):
+        tile = set_tile(0, 2, 1 if bits == 8 else 0, packed_width // 8, 16)
+        smode, tmode = (5 << 4), (3 << 4)
+        if matrix:
+            smode |= rng.choice((0, 1, 15)) | ((index & 1) << 8) | ((index & 2) << 8)
+            tmode |= rng.choice((0, 1, 15)) | ((index & 2) << 7) | ((index & 1) << 9)
+        tile[1] |= smode | tmode << 10 | (index & 15) << 20
+        x0, y0 = 1 + index % 7, 2 + index % 5
+        x1, y1 = x0 + 23, y0 + 7
+        s, t = (rng.randrange(-1000, 1000), rng.randrange(-200, 200)) if matrix else (0, 0)
+        words = set_image(2, TEXTURE_FB + index * 8192 + 2, 63) + tile
+        words += [0xf2000000, 124 << 12 | 28]
+        words += scissor((x0 + index % 3) * 4, (y0 + index % 2) * 4, (x1 - index % 2) * 4, (y1 + 1) * 4)
+        words += [0xef208000, index & 1,
+                  (0xe5000000 if index & 1 else 0xe4000000) | x1 * 4 << 12 | y1 * 4,
+                  x0 * 4 << 12 | y0 * 4, (s & 65535) << 16 | (t & 65535),
+                  (rng.choice((4096, 1024, -2048, 127)) & 65535) << 16 |
+                  (rng.choice((1024, -512, 33)) & 65535)]
+        submit(words + TEXTURE_SYNC)
+    records.append(vi(sequence, 2, TEXTURE_FB + 2, 63))
+    return serialize(records)
+
+
 def write_all(destination: pathlib.Path) -> None:
     destination.mkdir(parents=True, exist_ok=True)
     fixtures = {
@@ -507,6 +565,12 @@ def write_all(destination: pathlib.Path) -> None:
         "texture_copy_matrix4.aurcap": texture_copy_fixture(4 << 20, True),
         "texture_copy_matrix8.aurcap": texture_copy_fixture(8 << 20, True),
         "texture_copy_feedback.aurcap": texture_copy_feedback_fixture(),
+        "texture_ci8_copy.aurcap": texture_indexed_fixture(8),
+        "texture_ci4_copy.aurcap": texture_indexed_fixture(4),
+        "texture_ci8_matrix.aurcap": texture_indexed_fixture(8, True),
+        "texture_ci4_matrix.aurcap": texture_indexed_fixture(4, True),
+        "texture_ci8_ports.aurcap": texture_indexed_fixture(8, bank_probe=True),
+        "texture_ci4_ports.aurcap": texture_indexed_fixture(4, bank_probe=True),
     }
     for name, data in fixtures.items():
         (destination / name).write_bytes(data)

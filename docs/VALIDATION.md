@@ -61,6 +61,9 @@ Run `python3 scripts/test.py` after a build. Local test output is in
 
 # Texture upload record - 2026-10-24
 
+Historical snapshot; later M4 records below supersede the texture-format and
+sampling limitations stated in this section.
+
 ## Completed locally
 
 | Check | Actual result |
@@ -160,6 +163,9 @@ rejected-record test fail because RDRAM keeps a partial write.
 
 # 8-bit texel uploads - 2026-10-24
 
+Historical snapshot; the later CI4/CI8 copy-texture record below adds limited
+indexed lookup, without changing the unsupported IA/I/YUV and point-sampling status.
+
 ## Completed locally
 
 | Check | Actual result |
@@ -189,6 +195,9 @@ an 8-bit texel exactly.
   different `tmem_formatting` path in the reference.
 
 # Explicit texture fetch - 2026-10-24
+
+Historical snapshot for the point-fetch helper; CI4/CI8 support added later is
+specific to the production copy-cycle path and is not implemented by this helper.
 
 Historical limitation: these tests checked reference TMEM placement but used
 VI-style RGBA16 channel expectations. Direct reference texel comparisons on
@@ -226,6 +235,9 @@ the uploader and the sampler against each other.
   sharpen are separate work and must not receive a nearest sample silently.
 
 # Point/copy texture coordinates - 2026-10-26
+
+Historical scope record for the coordinate-only milestone; subsequent sections
+document the production RGBA16 and CI4/CI8 copy implementations.
 
 ## Completed locally
 
@@ -316,3 +328,39 @@ and optional one-bit alpha comparison are supported. Other raw OtherModes,
 wrapped addresses, bank conflicts and framebuffer spans crossing the declared
 stride remain rejected. Three-point filtering, remaining texture formats,
 triangles, combiner/blender/depth/coverage and accurate VI remain work ahead.
+
+# CI4/CI8 palette copy textures - 2026-10-26
+
+This follow-on M4 slice adds indexed texture fetch to the existing copy-cycle
+Metal rectangle path. `LoadTLUT` uploads RGBA16 entries to TMEM; CI8 uses the
+full index and CI4 selects one nibble and the tile palette. Metal performs the
+palette resolution. The CPU planner retains only the source-byte address and
+hardware lane selectors; no rendering code was copied from the reference.
+
+| Check | Actual result |
+| --- | --- |
+| Independent fixtures | Six original CI4/CI8 captures (base, 64-case matrix and palette-port probe per format) match pinned Angrylion RDRAM, TMEM and diagnostic VI-color layers |
+| Coverage | 132 indexed copy draws total: 64 matrix cases per format, plus base and lane/palette-port probes; includes signed coordinates, shifts, mask/mirror choices, odd rows and both nibble selections |
+| Palette ports | Deliberately non-identical palette lanes match; the matrix compares complete RDRAM and TMEM at every checkpoint |
+| Upload bounds | A size-0 load-tile descriptor packs 256 RGBA16 entries in the upper 2 KiB of TMEM; the last-entry boundary is accepted and overflow is rejected atomically |
+| Production route | Original 639-instruction CI8 ROM runs through CPU/RSP/AI/video plugin/Metal/VI: 15 RDP commands, eight VI events, zero Unsupported and exact 320x240 output pixels |
+| Regression | `scripts/build.sh` exited 0; a fresh-output `MTL_DEBUG_LAYER=1 python3 scripts/test.py` exited 0; CTest passed 12/12, including lifecycle, Swift startup, bundle relocation/signatures and previous texture matrices |
+
+During the first clean run the shared ROM fixture generator accidentally
+enabled TLUT mode for both RGBA16 and CI variants. The production renderer
+correctly rejected the RGBA16 case. The generator now enables TLUT only for the
+CI ROM; the full suite then passed from a fresh output directory. This keeps
+production mode validation strict rather than weakening it.
+
+The RGBA16 copy node's earlier 259 draws plus this 132-draw CI matrix are now
+391 original reference comparisons. Only the six added fixtures are new in this
+node. The test-only scalar replay still reports textured draws unsupported; the
+reference remains a separate offline executable pinned to commit
+`9c8b9ed3e7d7f00dff8bc872ccdd3fba1a3673fc`, not part of the app.
+
+Scope: this is CI4/CI8 + RGBA16 TLUT inside the restricted copy-cycle rectangle
+path, not general texture support. CI LoadTile input is still 8-bit packed bytes
+for the CI4 copy interpretation; native 4-bit LoadTile upload, point-cycle CI
+sampling, IA/I/YUV, non-RGBA16 TLUT, filtering/LOD, triangles and the combiner/
+blender/depth/coverage pipeline remain unfinished. No commercial game has been
+validated, and the emulator is not yet at a playable-game stage.

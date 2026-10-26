@@ -28,10 +28,12 @@ inline bool makeCopyPlan(const aurum::rdp::TextureRect& rect, size_t memoryBytes
         error = reason;
         return false;
     };
-    if (rect.cycleType != 2 || rect.otherModesHi != (2u << 20) ||
+    const bool indexed = rect.tileFormat == 2 && rect.tileSize <= 1;
+    const uint32_t expectedModes = (2u << 20) | (indexed ? (1u << 15) : 0);
+    if (rect.cycleType != 2 || rect.otherModesHi != expectedModes ||
         (rect.otherModesLo & ~1u) || rect.scissorMode ||
         rect.fbFormat != 0 || rect.fbSize != 2 ||
-        rect.tileFormat != 0 || rect.tileSize != 2)
+        (!indexed && (rect.tileFormat != 0 || rect.tileSize != 2)))
         return reject("Unsupported texture copy format or mode.");
     if (((rect.xh | rect.yh | rect.xl | rect.yl | rect.clipXh | rect.clipYh |
           rect.clipXl | rect.clipYl) & 3u) ||
@@ -75,14 +77,30 @@ inline bool makeCopyPlan(const aurum::rdp::TextureRect& rect, size_t memoryBytes
             const uint64_t base = uint64_t(tile.tmem) + uint64_t(tile.line) * coordinates.t;
             if (base >= 512) return reject("Wrapped texture copy row addressing is not modeled.");
             uint32_t indices[4];
+            uint32_t bankWords[4];
             for (uint32_t lane = 0; lane < 4; ++lane) {
-                if (coordinates.s[lane] < 0 || base * 4 + coordinates.s[lane] >= 2048)
+                if (coordinates.s[lane] < 0)
                     return reject("Wrapped texture copy S addressing is not modeled.");
-                indices[lane] = uint32_t(base * 4 + coordinates.s[lane]) ^
-                                ((coordinates.t & 1) ? 3u : 1u);
+                if (indexed) {
+                    const uint32_t s = uint32_t(coordinates.s[lane]);
+                    const uint64_t address = base * 8 + (rect.tileSize == 0 ? s / 2 : s);
+                    if (address >= 2048)
+                        return reject("Indexed texture copy exceeds the lower TMEM half.");
+                    const uint32_t byte = uint32_t(address) ^ ((coordinates.t & 1) ? 7u : 3u);
+                    bankWords[lane] = byte / 2;
+                    // Palette reads have one port per qword lane; host layout
+                    // swaps each halfword pair. Bit 14 selects the CI4 nibble.
+                    indices[lane] = byte | (lane ^ 1u) << 12 | (s & 1u) << 14;
+                } else {
+                    if (base * 4 + coordinates.s[lane] >= 2048)
+                        return reject("Wrapped texture copy S addressing is not modeled.");
+                    indices[lane] = uint32_t(base * 4 + coordinates.s[lane]) ^
+                                    ((coordinates.t & 1) ? 3u : 1u);
+                    bankWords[lane] = indices[lane];
+                }
                 for (uint32_t earlier = 0; earlier < lane; ++earlier)
-                    if ((indices[earlier] & 3u) == (indices[lane] & 3u) &&
-                        (indices[earlier] & 1023u) != (indices[lane] & 1023u))
+                    if ((bankWords[earlier] & 3u) == (bankWords[lane] & 3u) &&
+                        (bankWords[earlier] & 1023u) != (bankWords[lane] & 1023u))
                         return reject("Texture copy bank conflicts are not modeled.");
             }
             for (uint32_t lane = 0; lane < 4 && x + lane < xEnd; ++lane) {
