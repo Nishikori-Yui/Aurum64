@@ -61,7 +61,9 @@ bool Renderer::textureCopy(uint8_t* memory, size_t length, const TextureRect& re
         memcpy(p.ram.contents, memory, length);
         const uint32_t copyOptions = (rect.otherModesLo & 1u) |
             (rect.tileFormat == 2 ? 2u : 0u) | (rect.tileSize == 0 ? 4u : 0u) |
-            (((rect.tileModes >> 20) & 15u) << 8);
+            (((rect.tileModes >> 20) & 15u) << 8) |
+            ((rect.tileSize == 1 && (rect.tileFormat == 3 || rect.tileFormat == 4)) ? 8u : 0u) |
+            ((rect.tileFormat == 3 && rect.tileSize == 1) ? 16u : 0u);
         id<MTLCommandBuffer> command = [p.queue commandBuffer];
         id<MTLComputeCommandEncoder> encoder = [command computeCommandEncoder];
         [encoder setComputePipelineState:p.copyPipeline];

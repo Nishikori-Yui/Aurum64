@@ -41,6 +41,42 @@ int main(int argc, char** argv) {
         require((memory[0x1000 / 4] >> 16) == 0x1234,
                 "Copy changed a neighboring halfword");
         const auto before = memory;
+        auto intensity = rect;
+        intensity.tileFormat = 3;
+        intensity.tileSize = 1;
+        intensity.tileLine = 2;
+        intensity.otherModesLo = 0;
+        intensity.dsdx = 4096;
+        intensity.dtdy = 1024;
+        require(renderer.textureCopy(reinterpret_cast<uint8_t*>(memory.data()),
+                                     memory.size() * 4, intensity, tmem, error),
+                "Verified IA8 copy envelope was rejected");
+        intensity.tileFormat = 4;
+        require(renderer.textureCopy(reinterpret_cast<uint8_t*>(memory.data()),
+                                     memory.size() * 4, intensity, tmem, error),
+                "Verified I8 copy envelope was rejected");
+        const auto afterI8 = memory;
+        using Mutation = void (*)(TextureRect&);
+        const Mutation intensityMutations[] = {
+            +[](TextureRect& r) { r.s = 32; },
+            +[](TextureRect& r) { r.t = 32; },
+            +[](TextureRect& r) { r.dsdx = 2048; },
+            +[](TextureRect& r) { r.dtdy = 512; },
+            +[](TextureRect& r) { r.flip = true; },
+            +[](TextureRect& r) { r.tileModes = 1u << 4; },
+            +[](TextureRect& r) { r.tileSl = 4; },
+            +[](TextureRect& r) { r.tileTl = 4; },
+        };
+        for (const auto change : intensityMutations) {
+            auto item = intensity;
+            change(item);
+            require(!renderer.textureCopy(reinterpret_cast<uint8_t*>(memory.data()),
+                                          memory.size() * 4, item, tmem, error),
+                    "Unverified IA/I addressing was accepted");
+            require(memory == afterI8,
+                    "Rejected IA/I copy partially modified RDRAM");
+        }
+        memory = before;
         std::vector<TextureRect> rejected;
         const auto bad = [&](auto change) {
             auto item = rect; change(item); rejected.push_back(item);
@@ -54,6 +90,9 @@ int main(int argc, char** argv) {
         bad([](auto& r) { r.fbSize = 3; });
         bad([](auto& r) { r.tileSize = 3; });
         bad([](auto& r) { r.tileFormat = 2; });
+        bad([](auto& r) { r.tileFormat = 3; r.tileSize = 1; r.otherModesLo = 1; });
+        bad([](auto& r) { r.tileFormat = 4; r.tileSize = 1; r.otherModesLo = 1; });
+        bad([](auto& r) { r.tileFormat = 3; r.tileSize = 2; r.otherModesLo = 1; });
         bad([](auto& r) { r.xh = 1; });
         bad([](auto& r) { r.clipYl = 7; });
         bad([](auto& r) { r.fbAddress = 0x1001; });

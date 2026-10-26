@@ -15,7 +15,22 @@ kernel void textureCopy(device uint* ram [[buffer(0)]], device const ushort* tme
         uint source = lane == 0 ? item.high : item.low;
         if (source == 0xffffffffu) continue;
         uint texel;
-        if (options & 2u) {
+        if (options & 8u) {
+            device const uchar* bytes = reinterpret_cast<device const uchar*>(tmem);
+            uint first = bytes[source & 4095u];
+            uint second = bytes[(source >> 16) & 4095u];
+            if (options & 16u) {
+                first = ((first >> 4) & 15u) * 17u;
+                second = ((second >> 4) & 15u) * 17u;
+            }
+            uint pair = (first << 8) | second;
+            if (source & (1u << 31)) {
+                first = bytes[source & 4095u];
+                second = bytes[(source >> 16) & 4095u];
+                pair = (first << 8) | second;
+            }
+            texel = pair;
+        } else if (options & 2u) {
             device const uchar* bytes = reinterpret_cast<device const uchar*>(tmem);
             uint entry = bytes[source & 4095u];
             if (options & 4u)

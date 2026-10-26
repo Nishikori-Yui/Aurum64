@@ -29,12 +29,22 @@ inline bool makeCopyPlan(const aurum::rdp::TextureRect& rect, size_t memoryBytes
         return false;
     };
     const bool indexed = rect.tileFormat == 2 && rect.tileSize <= 1;
+    const bool intensity8 = rect.tileSize == 1 &&
+                            (rect.tileFormat == 3 || rect.tileFormat == 4);
+    const bool raw16 = rect.tileSize == 2 &&
+                       (rect.tileFormat == 0 || rect.tileFormat == 3);
     const uint32_t expectedModes = (2u << 20) | (indexed ? (1u << 15) : 0);
     if (rect.cycleType != 2 || rect.otherModesHi != expectedModes ||
         (rect.otherModesLo & ~1u) || rect.scissorMode ||
         rect.fbFormat != 0 || rect.fbSize != 2 ||
-        (!indexed && (rect.tileFormat != 0 || rect.tileSize != 2)))
+        (!indexed && !intensity8 && !raw16) ||
+        ((intensity8 || (rect.tileFormat == 3 && rect.tileSize == 2)) &&
+         (rect.otherModesLo & 1u)))
         return reject("Unsupported texture copy format or mode.");
+    if (intensity8 && (rect.s || rect.t || rect.flip || rect.dsdx != 4096 ||
+                       rect.dtdy != 1024 || rect.tileModes || rect.tileSl ||
+                       rect.tileTl))
+        return reject("IA/I copy addressing outside the verified envelope.");
     if (((rect.xh | rect.yh | rect.xl | rect.yl | rect.clipXh | rect.clipYh |
           rect.clipXl | rect.clipYl) & 3u) ||
         std::max({rect.xh, rect.yh, rect.xl, rect.yl, rect.clipXh, rect.clipYh,
@@ -81,7 +91,15 @@ inline bool makeCopyPlan(const aurum::rdp::TextureRect& rect, size_t memoryBytes
             for (uint32_t lane = 0; lane < 4; ++lane) {
                 if (coordinates.s[lane] < 0)
                     return reject("Wrapped texture copy S addressing is not modeled.");
-                if (indexed) {
+                if (intensity8) {
+                    const uint32_t s = uint32_t(coordinates.s[lane]);
+                    const uint64_t address = base * 8 + s;
+                    if (address >= aurum::tmem::Store::kBytes)
+                        return reject("Intensity texture copy exceeds TMEM.");
+                    indices[lane] = uint32_t(address) ^
+                                    ((coordinates.t & 1) ? 7u : 3u);
+                    bankWords[lane] = 0;
+                } else if (indexed) {
                     const uint32_t s = uint32_t(coordinates.s[lane]);
                     const uint64_t address = base * 8 + (rect.tileSize == 0 ? s / 2 : s);
                     if (address >= 2048)
@@ -98,7 +116,7 @@ inline bool makeCopyPlan(const aurum::rdp::TextureRect& rect, size_t memoryBytes
                                     ((coordinates.t & 1) ? 3u : 1u);
                     bankWords[lane] = indices[lane];
                 }
-                for (uint32_t earlier = 0; earlier < lane; ++earlier)
+                for (uint32_t earlier = 0; !intensity8 && earlier < lane; ++earlier)
                     if ((bankWords[earlier] & 3u) == (bankWords[lane] & 3u) &&
                         (bankWords[earlier] & 1023u) != (bankWords[lane] & 1023u))
                         return reject("Texture copy bank conflicts are not modeled.");
@@ -108,7 +126,14 @@ inline bool makeCopyPlan(const aurum::rdp::TextureRect& rect, size_t memoryBytes
                 const uint32_t word = address / 4;
                 if (words.empty() || words.back().word != word) words.push_back({word});
                 auto& destination = (address & 2u) ? words.back().low : words.back().high;
-                destination = indices[lane];
+                if (intensity8) {
+                    // Preserve the copy-cycle byte pair for conversion in Metal.
+                    const uint32_t first = lane == 0 ? 0 : 2;
+                    destination = indices[first] | (indices[first + 1] << 16);
+                    if (lane >= 2) destination |= 1u << 31;
+                } else {
+                    destination = indices[lane];
+                }
             }
         }
     }

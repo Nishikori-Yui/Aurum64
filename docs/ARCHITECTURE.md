@@ -37,15 +37,19 @@ The video plugin owns a persistent 4 KiB TMEM store, cleared on new ROM/reset.
 LoadTile/Block/TLUT callbacks use the same bounded uploader as diagnostic replay.
 TextureRectangle/Flip snapshots carry their issue-time tile, scissor and raw
 OtherModes. The texture path accepts restricted integer-edge RGBA16 and CI4/CI8
-copy rectangles with an RGBA16 TLUT. A CPU planner validates the entire draw,
-maps each qword's S/T coordinates and groups destinations by host word. The plan
-contains only addresses and CI4 nibble/palette-port selectors; a Metal kernel
-reads TMEM, performs indexed palette lookup where needed, applies the optional
-one-bit alpha comparison and writes both framebuffer lanes. The planner merges
-words shared by neighboring rows or odd framebuffer bases, so each GPU invocation
-has exclusive ownership. Unsupported draws leave RDRAM untouched. Completion and
-CPU readback precede subsequent uploads, which allows a rendered framebuffer to
-become a texture source. Point-cycle indexed sampling, other TLUT types, other
+copy rectangles with an RGBA16 TLUT, IA16 copy rectangles, and a narrow IA8/I8
+copy envelope (zero S/T and tile origin, unit derivatives, no flip or tile
+addressing modes). IA8/I8 addressing variants outside that envelope remain Unsupported
+after a 64-case differential matrix exposed unresolved qword lane/bank behavior.
+A CPU planner validates the entire draw, maps supported qword coordinates and
+groups destinations by host word. The plan carries fetch selectors; a Metal
+kernel reads TMEM, performs indexed palette lookup or the currently validated
+IA/I conversion, applies the optional RGBA16 one-bit alpha comparison and writes
+both framebuffer lanes. The planner merges words shared by neighboring rows or
+odd framebuffer bases, so each GPU invocation has exclusive ownership.
+Unsupported draws leave RDRAM untouched. Completion and CPU readback precede
+subsequent uploads, which allows a rendered framebuffer to become a texture
+source. Point-cycle indexed sampling, other TLUT types, other
 indexed formats and filtering remain unsupported.
 
 The isolated point-fetch helper also decodes IA8, IA16 and I8 from

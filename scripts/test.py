@@ -10,7 +10,7 @@ import sys
 import tempfile
 
 root = pathlib.Path(__file__).resolve().parent.parent
-tests = root / ".build/tests"
+tests = pathlib.Path(os.environ.get("AURUM_TEST_OUTPUT_DIR", root / ".build/tests")).resolve()
 tests.mkdir(parents=True, exist_ok=True)
 def run(args, **kwargs):
     subprocess.run([str(x) for x in args], cwd=root, check=True, timeout=45, **kwargs)
@@ -258,7 +258,9 @@ run([root / ".build/native/aurum-texture-fetch-tests", fixtures])
 for fixture in ("texture_copy", "texture_copy_matrix4", "texture_copy_matrix8",
                 "texture_copy_feedback", "texture_ci8_copy", "texture_ci4_copy",
                 "texture_ci8_matrix", "texture_ci4_matrix", "texture_ci8_ports",
-                "texture_ci4_ports"):
+                "texture_ci4_ports", "texture_ia8_copy", "texture_i8_copy",
+                "texture_ia16_copy", "texture_ia8_matrix", "texture_i8_matrix",
+                "texture_ia16_matrix"):
     capture = fixtures / f"{fixture}.aurcap"
     expected, actual = fixtures / f"{fixture}.ref", fixtures / f"{fixture}.metal"
     run([root / ".build/native/aurum-angrylion-reference", capture, expected])
@@ -266,14 +268,30 @@ for fixture in ("texture_copy", "texture_copy_matrix4", "texture_copy_matrix8",
                                root / ".build/native/AurumRDP.metallib"],
                               capture_output=True, text=True, timeout=30)
     assert rendered.returncode == 0, rendered.stderr
-    assert json.loads(rendered.stdout)["unsupported"] == 0, rendered.stdout
+    unsupported = json.loads(rendered.stdout)["unsupported"]
+    if fixture in ("texture_ia8_matrix", "texture_i8_matrix"):
+        assert unsupported == 64, rendered.stdout
+        # Addressing variants that diverge must fail closed before any draw writes.
+        framebuffer = pathlib.Path(str(actual) + ".rdram").read_bytes()
+        base = 0x300000
+        length = 8192 * 64
+        expected = bytearray(length)
+        for index in range(length):
+            guest_address = base + index
+            if guest_address >= base + 2:
+                source_offset = guest_address - (base + 2)
+                if source_offset < length:
+                    expected[(guest_address ^ 3) - base] = (0x6b, 0x5a)[source_offset & 1]
+        assert framebuffer[base:base + length] == expected, fixture
+        continue
+    assert unsupported == 0, rendered.stdout
     assert "engine=aurum-metal-replay" in pathlib.Path(str(actual) + ".manifest").read_text()
     run([root / ".build/native/aurum-reference-diff", expected, actual, capture])
     if fixture == "texture_copy":
         scalar = subprocess.run([str(root / ".build/native/aurum-aurcap-replay"), capture],
                                 capture_output=True, text=True, timeout=30)
         assert scalar.returncode == 0 and json.loads(scalar.stdout)["unsupported"] == 1
-print("PASS: 391 original RGBA16/CI4/CI8 Metal texture draws match independent reference layers")
+print("PASS: original RGBA16/CI4/CI8/IA8/I8/IA16 supported Metal texture draws match independent reference layers; unverified IA/I matrices fail closed")
 
 # Pin the memory record's byte mapping to the independently validated fill
 # path: both fixtures write the same texels, so the reference engine must

@@ -380,15 +380,11 @@ The first direct channel comparison caught an earlier false assumption: the
 sampler had set I8 alpha to 255 based on a common-format convention. Angrylion
 returned the intensity byte for alpha as well (the first probe sample returned
 `0xe6` rather than `0xff`), so the sampler and fixture expectation now use
-intensity for RGBA. The format remains out of the production draw path.
+intensity for RGBA.
 
-This does **not** add IA8/I8 production rendering: the Metal copy-cycle path
-still rejects these formats, and point-cycle sampling is not wired into the RDP
-renderer. A preliminary hand-built copy capture was not suitable evidence for
-the framebuffer conversion rules, so no copy-path semantics were inferred from
-it. A future end-to-end implementation needs dedicated lane/address fixtures
-and independent reference comparisons before these formats are accepted by
-production dispatch.
+At this point the formats were still isolated from production rendering. The
+follow-on section below records the subsequent copy-cycle work and its separate
+reference evidence. Point-cycle sampling remains unwired.
 
 | Check | Result |
 | --- | --- |
@@ -400,3 +396,27 @@ production dispatch.
 | Fetch test | `aurum-texture-fetch-tests .build/ia-channel-validation/fixtures` passed with reference layers |
 
 No commercial game claim follows from this sampler-only milestone.
+
+# IA8/I8/IA16 copy rectangles - 2026-10-26 (restricted addressing)
+
+IA8, I8 and IA16 have a restricted production copy-cycle rectangle path. IA16
+uses the raw 16-bit copy lane. IA8/I8 pass an original baseline capture with
+zero S/T origin, unit copy derivatives, no flip, and default tile addressing,
+including odd texture rows. A broader 64-case matrix exposed RDRAM differences
+for IA8/I8 when coordinates, shifts/masks or flip vary. The earlier planner's
+linear byte-address assumption was too broad; production dispatch now accepts
+IA8/I8 only inside the verified envelope and fails closed for those variants.
+The failed modes are retained as negative differential tests, not dropped.
+
+| Check | Result |
+| --- | --- |
+| Independent baseline | Original IA8, I8 and IA16 captures match pinned Angrylion RDRAM, TMEM and diagnostic VI-color layers |
+| IA/I addressing matrix | IA16's 64-case matrix matches; IA8/I8's 64 unverified variants each report Unsupported and leave the seeded framebuffer unchanged |
+| Production guard | Unit tests accept the verified IA8/I8 baseline envelope and reject nonzero S/T or tile origins, non-unit derivatives, flip and tile addressing changes atomically |
+| Other unsupported modes | Alpha compare for IA/I remains rejected; no approximation is hidden |
+
+The IA8/I8 qword lane/bank mapping remains unresolved outside this envelope; do
+not expand it until an independently explained mapping passes the matrix.
+Point-cycle rendering, filtering, LOD, native 4-bit upload, YUV, triangles,
+Combiner/Blender/Depth/Coverage and accurate VI remain unfinished. No
+commercial game is claimed playable from this node.

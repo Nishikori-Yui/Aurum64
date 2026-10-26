@@ -6,11 +6,13 @@ shell, Core Audio, GameController and an independent Metal compute renderer.
 
 **This is an early emulator implementation, not a game-compatible release.**
 The renderer implements fill-cycle RGBA16/RGBA32 rectangles, restricted
-RGBA16/CI4/CI8 copy-cycle texture rectangles with RGBA16 TLUT, and basic VI
-scanout. TMEM uploads and signed point/copy coordinates have independent
-reference tests. Triangles, filtered textures, combiner, blender, depth,
-coverage and accurate VI filters remain unfinished. The CPU uses the cached
-interpreter, not a JIT.
+RGBA16/CI4/CI8 copy-cycle texture rectangles with RGBA16 TLUT, IA16 copy
+rectangles, and a narrower IA8/I8 copy envelope with zero S/T origin, unit
+derivatives, no flip and default tile addressing. Unsupported IA8/I8 address
+variants are rejected. The renderer also has basic VI scanout. TMEM uploads and
+signed point/copy coordinates have independent reference tests. Triangles,
+filtered textures, combiner, blender, depth, coverage and accurate VI filters
+remain unfinished. The CPU uses the cached interpreter, not a JIT.
 There is no claim of real-time performance or commercial-game compatibility.
 
 ## Build and run
@@ -123,12 +125,16 @@ those remain explicit differential gaps rather than silently passing comparisons
 `aurum-metal-replay capture.aurcap output-prefix library.metallib` uses the
 production Metal fill and texture-copy renderer while retaining the diagnostic
 scalar VI-color export. Texture copy currently supports RGBA16 and CI4/CI8 with
-RGBA16 TLUT, copy cycle, integer rectangle/scissor edges and no perspective or
-LOD. Alpha comparison uses the fetched RGBA16 texel's one-bit alpha. Unsupported
-modes, wrapped addresses and unmodeled bank conflicts are rejected before any
-framebuffer write. Its CPU plan contains addresses; Metal fetches TMEM, performs
-the optional palette lookup and alpha test, then writes the pixels. This is an
-initial synchronous implementation, with no performance claim.
+RGBA16 TLUT plus IA16 and a constrained IA8/I8 copy subset, all with integer
+rectangle/scissor edges and no perspective or LOD. IA8/I8 reject nonzero S/T
+origins, non-unit derivatives, flip, nonzero tile origins and tile
+shift/mask/mirror/clamp modes;
+their broader qword lane/bank behavior is not yet modeled. Alpha comparison is
+limited to the validated RGBA16 path. Unsupported modes, wrapped addresses and
+unmodeled bank conflicts are rejected before any framebuffer write. The CPU
+plan carries validated fetch selectors; Metal fetches TMEM, performs optional
+palette/channel conversion and writes the pixels. This is an initial
+synchronous implementation, with no performance claim.
 
 ## Next milestones
 

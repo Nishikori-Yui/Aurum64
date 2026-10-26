@@ -555,6 +555,61 @@ def texture_indexed_fixture(bits: int, matrix: bool = False, bank_probe: bool = 
     return serialize(records)
 
 
+def texture_intensity_copy_fixture(fmt: int, size: int = 1,
+                                   matrix: bool = False) -> bytes:
+    """IA8/I8 or IA16 copy rectangle with distinguishable source texels."""
+    width, height = ((32, 16) if matrix else (16, 4)) if size == 1 else \
+                    ((16, 8) if matrix else (8, 4))
+    if size == 1:
+        source = bytes((0x13 + y * 0x31 + x * 0x17 + x * y * 3) & 255
+                       for y in range(height) for x in range(width))
+    else:
+        source = b"".join(struct.pack(">H", 0x2180 + y * 0x100 + x * 0x11)
+                          for y in range(height) for x in range(width))
+    fb_width = 63 if matrix else width
+    destination = TEXTURE_FB + (2 if matrix else 0)
+    tile_line = width // (8 if size == 1 else 4)
+    records = [initial(4 << 20), memory(2, TEXTURE_SRC, source)]
+    if matrix:
+        records.append(memory(3, destination, b"\x6b\x5a" * (8192 * 64 // 2)))
+    words = (set_texture_image(fmt, size, width, TEXTURE_SRC) +
+             set_tile(0, fmt, size, tile_line, 0) +
+             load_tile(0, 0, 0, (width - 1) * 4, (height - 1) * 4) +
+             TEXTURE_SYNC)
+    rng = random.Random(0x1A110 + fmt * 17 + size)
+    for index in range(64 if matrix else 1):
+        fb = destination + (index * 8192 if matrix else 0)
+        x0, y0 = (1 + index % 7, 2 + index % 5) if matrix else (0, 0)
+        x1 = min(width - 1, x0 + (rng.randrange(8, 24) if matrix else width - 1))
+        y1 = min(height - 1, y0 + (rng.randrange(3, 9) if matrix else height - 1))
+        clip_x0 = x0 + (index % 3 if matrix else 0)
+        clip_y0 = y0 + (index % 2 if matrix else 0)
+        clip_x1 = min(width, x1 + 1 - (index % 2 if matrix else 0))
+        clip_y1 = min(height, y1 + 1)
+        shift_s = (index % 3) if matrix else 0
+        shift_t = (index // 3 % 3) if matrix else 0
+        mask_s = (index % 6) if matrix else 0
+        mask_t = (index % 4) if matrix else 0
+        modes = (shift_s | (mask_s << 4) | ((index & 1) << 8) |
+                 (shift_t << 10) | (mask_t << 14) | (((index >> 1) & 1) << 18))
+        tile = set_tile(0, fmt, size, tile_line, 0)
+        tile[1] |= modes
+        s = rng.randrange(0, 32 * 32) if matrix else 0
+        t = rng.randrange(0, 16 * 32) if matrix else 0
+        dsdx = rng.choice((4096, 2048, 1024, 511)) if matrix else 4096
+        dtdy = rng.choice((1024, 512, 2048)) if matrix else 1024
+        flip = bool(index & 1) if matrix else False
+        words += (set_image(2, fb, fb_width) + tile +
+                  [0xf2000000, ((width - 1) * 4 << 12) | ((height - 1) * 4)] +
+                  scissor(clip_x0 * 4, clip_y0 * 4, clip_x1 * 4, clip_y1 * 4) +
+                  [0xef200000, 0,
+                   (0xe5000000 if flip else 0xe4000000) | x1 * 4 << 12 | y1 * 4,
+                   x0 * 4 << 12 | y0 * 4, (s & 65535) << 16 | (t & 65535),
+                   (dsdx & 65535) << 16 | (dtdy & 65535)] + TEXTURE_SYNC)
+    records.extend([rdp(4, 0x100000, words), vi(5, 2, destination, fb_width)])
+    return serialize(records)
+
+
 def write_all(destination: pathlib.Path) -> None:
     destination.mkdir(parents=True, exist_ok=True)
     fixtures = {
@@ -586,6 +641,12 @@ def write_all(destination: pathlib.Path) -> None:
         "texture_ci4_matrix.aurcap": texture_indexed_fixture(4, True),
         "texture_ci8_ports.aurcap": texture_indexed_fixture(8, bank_probe=True),
         "texture_ci4_ports.aurcap": texture_indexed_fixture(4, bank_probe=True),
+        "texture_ia8_copy.aurcap": texture_intensity_copy_fixture(3),
+        "texture_i8_copy.aurcap": texture_intensity_copy_fixture(4),
+        "texture_ia16_copy.aurcap": texture_intensity_copy_fixture(3, 2),
+        "texture_ia8_matrix.aurcap": texture_intensity_copy_fixture(3, matrix=True),
+        "texture_i8_matrix.aurcap": texture_intensity_copy_fixture(4, matrix=True),
+        "texture_ia16_matrix.aurcap": texture_intensity_copy_fixture(3, 2, matrix=True),
     }
     for name, data in fixtures.items():
         (destination / name).write_bytes(data)
