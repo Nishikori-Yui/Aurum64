@@ -70,16 +70,25 @@ bool Renderer::scanout(const uint8_t* memory, size_t length, const VideoInterfac
     uint32_t type = vi.status & 3;
     int h = int(vi.hStart & 1023) - int((vi.hStart >> 16) & 1023);
     int v = int(vi.vStart & 1023) - int((vi.vStart >> 16) & 1023);
-    if (type < 2 || !vi.width || h <= 0 || v < 2 || !(vi.xScale & 4095) || !(vi.yScale & 4095)) {
+    const uint32_t xScale = vi.xScale & 4095;
+    const uint32_t yScale = vi.yScale & 4095;
+    if (type < 2 || !vi.width || h <= 0 || v < 2 || !xScale || !yScale) {
         pixels.clear(); return true;
     }
     if (!impl->ram || !length || length % 4 || length > impl->ram.length || vi.width > 4096) {
         error = "Invalid VI memory layout."; return false;
     }
     struct Parameters { uint32_t origin, stride, size, width, height, xScale, yScale, xOffset, yOffset, length; };
-    width = std::min(h, 640); height = std::min(v / 2, 576);
-    Parameters s{vi.origin & 0xffffff, vi.width, type, width, height, vi.xScale & 4095,
-                 vi.yScale & 4095, (vi.xScale >> 16) & 4095, (vi.yScale >> 16) & 4095, uint32_t(length)};
+    const uint64_t scaledWidth = (uint64_t(h) * xScale + 1023) / 1024;
+    const uint64_t scaledHeight = (uint64_t(v / 2) * yScale + 1023) / 1024;
+    if (!scaledWidth || !scaledHeight) { pixels.clear(); return true; }
+    // The presentation path has a fixed maximum texture size. Clipping the
+    // output dimensions still leaves the shader's source-coordinate mapping
+    // driven by the VI scale registers.
+    width = uint32_t(std::min<uint64_t>(scaledWidth, 640));
+    height = uint32_t(std::min<uint64_t>(scaledHeight, 576));
+    Parameters s{vi.origin & 0xffffff, vi.width, type, width, height, xScale,
+                 yScale, (vi.xScale >> 16) & 4095, (vi.yScale >> 16) & 4095, uint32_t(length)};
     @autoreleasepool {
         auto& p = *impl;
         memcpy(p.ram.contents, memory, length);

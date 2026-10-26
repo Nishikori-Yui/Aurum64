@@ -141,7 +141,12 @@ bool read(std::istream& input, std::vector<Record>& records, std::string& error,
         chunk[0] = first;
         if (!readExact(input, chunk.data() + 1, chunk.size() - 1)) { error = "Truncated capture chunk header."; return false; }
         const uint32_t length = get32(chunk.data() + 4);
-        if (length > kMaxChunkBytes || total > maxBytes - kChunkHeaderBytes - length) {
+        // Check the subtraction operands before evaluating the size bound;
+        // callers may intentionally supply a reader limit smaller than one
+        // chunk header plus payload.
+        if (length > kMaxChunkBytes || length > maxBytes ||
+            kChunkHeaderBytes > maxBytes - length ||
+            total > maxBytes - kChunkHeaderBytes - length) {
             error = "Capture chunk exceeds reader limit."; return false;
         }
         Record record;

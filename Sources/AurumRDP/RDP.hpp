@@ -28,6 +28,16 @@ struct TextureRect {
     uint32_t xh = 0, yh = 0, xl = 0, yl = 0;   // raw 12-bit edge fields
     int32_t s = 0, t = 0, dsdx = 0, dtdy = 0;  // sign-extended 16-bit
     bool flip = false;
+    // Decoder state at issue time, so a renderer can resolve the destination
+    // and source layout without reaching back into the decoder.
+    uint32_t cycleType = 0;
+    uint32_t fbFormat = 0, fbSize = 0, fbWidth = 0, fbAddress = 0;
+    uint32_t tileFormat = 0, tileSize = 0, tileLine = 0, tileTmem = 0;
+    uint32_t tileSl = 0, tileTl = 0, tileSh = 0, tileTh = 0;
+    // SetTile word-1 bits below the tile index: ct/mt/mask_t/shift_t/cs/ms/
+    // mask_s/shift_s. Non-zero means a coordinate mode this decoder does not
+    // model, so renderers must reject rather than approximate.
+    uint32_t tileModes = 0;
 };
 struct UnsupportedContext {
     uint32_t valid = 0, opcode = 0, wordCount = 0, capturedWords = 0;
@@ -69,6 +79,7 @@ public:
     uint64_t recentUnsupported() const { return recentUnsupportedCount; }
     const UnsupportedContext& firstUnsupported() const { return unsupportedContext; }
     const std::array<uint32_t, 32>& tileSizes() const { return tileSizes_; }
+    const std::array<uint32_t, 8>& tileModes() const { return tileModes_; }
     StateSnapshot stateSnapshot() const {
         StateSnapshot state;
         state.fbFormat = format; state.fbSize = size; state.fbWidth = width;
@@ -105,6 +116,7 @@ private:
     uint32_t tiFormat = 0, tiSize = 0, tiWidth = 0, tiAddress = 0, zbAddress = 0;
     std::array<uint32_t, 32> tiles{};
     std::array<uint32_t, 32> tileSizes_{};
+    std::array<uint32_t, 8> tileModes_{};
     uint32_t sx0 = 0, sy0 = 0, sx1 = 0, sy1 = 0;
     void markUnsupported(std::span<const uint32_t> words);
 };

@@ -58,6 +58,7 @@ void Decoder::reset() {
     tiFormat = tiSize = tiWidth = tiAddress = zbAddress = 0;
     tiles.fill(0);
     tileSizes_.fill(0);
+    tileModes_.fill(0);
     sx0 = sy0 = sx1 = sy1 = 0;
     haveState = false;
 }
@@ -143,6 +144,7 @@ void Decoder::execute(std::span<const uint32_t> w) {
         tiles[tile * 4 + 1] = (a >> 19) & 3;
         tiles[tile * 4 + 2] = (a >> 9) & 0x1ff;
         tiles[tile * 4 + 3] = a & 0x1ff;
+        tileModes_[tile] = b & 0xffffff;
         break;
     }
     case 0x30:
@@ -182,6 +184,18 @@ void Decoder::execute(std::span<const uint32_t> w) {
         rect.t = int16_t(w[2] & 0xffff);
         rect.dsdx = int16_t((w[3] >> 16) & 0xffff);
         rect.dtdy = int16_t(w[3] & 0xffff);
+        rect.cycleType = cycle;
+        rect.fbFormat = format; rect.fbSize = size;
+        rect.fbWidth = width; rect.fbAddress = address;
+        rect.tileFormat = tiles[rect.tile * 4 + 0];
+        rect.tileSize = tiles[rect.tile * 4 + 1];
+        rect.tileLine = tiles[rect.tile * 4 + 2];
+        rect.tileTmem = tiles[rect.tile * 4 + 3];
+        rect.tileSl = tileSizes_[rect.tile * 4 + 0];
+        rect.tileTl = tileSizes_[rect.tile * 4 + 1];
+        rect.tileSh = tileSizes_[rect.tile * 4 + 2];
+        rect.tileTh = tileSizes_[rect.tile * 4 + 3];
+        rect.tileModes = tileModes_[rect.tile];
         if (!textureRect || !textureRect(rect)) markUnsupported(w);
         break;
     }

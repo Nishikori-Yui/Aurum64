@@ -75,6 +75,11 @@ int main(int argc, char** argv) {
         require(renderer.scanout(reinterpret_cast<uint8_t*>(ram.data()), ram.size()*4, vi,pixels,w,h,error),error.c_str());
         require(pixels[9] == 0xff00f800 && pixels[10] == 0xff0000f8,
                 "RGBA5551 VI conversion mismatch");
+        vi = {3, 0x2000, 4, 4, 4, 512, 512};
+        require(renderer.scanout(reinterpret_cast<uint8_t*>(ram.data()), ram.size()*4, vi,
+                                 pixels, w, h, error), error.c_str());
+        require(w == 2 && h == 1 && pixels.size() == 2,
+                "VI scale was not applied to output dimensions");
         const uint32_t triangle[44] = {0xcf000000};
         decoder.push(std::span(triangle, 43));
         require(decoder.unsupported == 0, "Partial triangle consumed too early");

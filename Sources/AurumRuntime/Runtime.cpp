@@ -133,7 +133,15 @@ void run(std::string rom, std::string frameworks, std::string resources, std::st
             check(attach(type, handle), "Plugin attachment"); plugins.back().attached = true;
             if (type == M64PLUGIN_GFX) resetVideo = symbol<void (*)()>(handle, "AurumResetVideo");
         }
-        check(coreCommand(M64CMD_EXECUTE, 0, nullptr), "Emulation");
+        // Plugin attachment can report a fatal error (for example when the
+        // renderer cannot create its Metal resources). Do not enter the core
+        // with a partially initialized plugin set in that case.
+        bool startupFailed;
+        {
+            std::lock_guard lock(mutex);
+            startupFailed = failed;
+        }
+        if (!startupFailed) check(coreCommand(M64CMD_EXECUTE, 0, nullptr), "Emulation");
     } catch (const std::exception& error) { aur_fail(error.what()); }
     // All cleanup remains on the core-owning thread, including partial startup failures.
     resetVideo = nullptr;
@@ -158,8 +166,13 @@ int aur_start(const char* rom, const char* frameworks, const char* resources, co
     {
         std::lock_guard lock(mutex);
         if (snapshot.state != AUR_STOPPED && snapshot.state != AUR_FAILED) return 0;
+        // Reserve the runtime before joining a failed worker. This prevents a
+        // concurrent caller from trying to join or replace the same thread.
         snapshot.state = AUR_STARTING;
     }
+    // A failed session can publish AUR_FAILED before its worker has finished
+    // unloading the core and plugins. Reap that worker before resetting the
+    // shared state, otherwise a new session can race with old cleanup.
     if (worker.joinable()) worker.join();
     {
         std::lock_guard lock(mutex);
