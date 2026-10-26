@@ -69,7 +69,8 @@ struct Replay {
                                lastStateHash});
     }
 
-    void video(const aurum::capture::Record& record, uint64_t frames) {
+    void video(const aurum::capture::Record& record, uint64_t frames,
+               uint64_t submissions) {
         require(record.payload.size() == 28, "Invalid VI capture payload.");
         constexpr uint32_t map[7] = {0, 1, 2, 3, 4, 5, 6};
         uint32_t vi[14]{};
@@ -103,7 +104,7 @@ struct Replay {
             scaledHeight <= 0 || !xScale || !yScale) {
             color.emplace_back();
             geometry.emplace_back(0, 0);
-            checkpoints.push_back({2, record.sequence, 0, 0, frames + 1,
+            checkpoints.push_back({2, record.sequence, submissions, 0, frames + 1,
                                    lastStateHash});
             return;
         }
@@ -138,7 +139,7 @@ struct Replay {
         }
         color.push_back(std::move(pixels));
         geometry.emplace_back(outWidth, outHeight);
-        checkpoints.push_back({2, record.sequence, 0, 0, frames + 1,
+        checkpoints.push_back({2, record.sequence, submissions, 0, frames + 1,
                                lastStateHash});
     }
 };
@@ -189,7 +190,7 @@ void replay(aurum::rdp::Decoder& decoder, Replay& output,
             }
             output.stateCheckpoint(decoder, record.sequence);
         } else if (record.type == aurum::capture::kRecordVI) {
-            output.video(record, decoder.viCount());
+            output.video(record, decoder.viCount(), decoder.submissionCount());
             decoder.beginVI();
         }
     }

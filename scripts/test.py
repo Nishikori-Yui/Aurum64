@@ -156,6 +156,17 @@ assert (reference_dir / "fill.vi-coverage-7.rgba8").stat().st_size == 205 * 240 
 print(layer.stdout, end="")
 run([root / ".build/native/aurum-reference-diff", reference_dir / "fill",
      replay_dir / "fill", tests / "fill.aurcap"])
+with tempfile.TemporaryDirectory(prefix="aurum-checkpoint-metadata-") as temp:
+    changed = pathlib.Path(temp) / "actual"
+    shutil.copytree(reference_dir / "actual", changed)
+    checkpoints = bytearray((changed / "fill.checkpoints").read_bytes())
+    struct.pack_into("<Q", checkpoints, 16, struct.unpack_from("<Q", checkpoints, 16)[0] + 1)
+    (changed / "fill.checkpoints").write_bytes(checkpoints)
+    mismatch = subprocess.run([str(root / ".build/native/aurum-reference-diff"),
+                               reference_dir / "fill", changed / "fill", tests / "fill.aurcap"],
+                              capture_output=True, text=True, timeout=30)
+    assert mismatch.returncode == 1 and '"field":"submission"' in mismatch.stdout, \
+        "Reference diff ignored checkpoint event metadata"
 with tempfile.TemporaryDirectory(prefix="aurum-missing-layer-") as temp:
     missing = pathlib.Path(temp) / "actual"
     shutil.copytree(reference_dir / "actual", missing)

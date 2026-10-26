@@ -151,12 +151,27 @@ int main(int argc, char** argv) {
         for (size_t i = 0; i < commonCheckpoints; ++i) {
             const auto& expected = expectedCheckpoints[i];
             const auto& actual = actualCheckpoints[i];
-            if (expected.type == actual.type && expected.hash == actual.hash) continue;
+            if (expected.type == actual.type && expected.record == actual.record &&
+                expected.submission == actual.submission &&
+                expected.vi == actual.vi &&
+                expected.hash == actual.hash) continue;
             uint64_t expectedField = 0, actualField = 0;
             const char* fieldName = "event-shape";
             expectedField = expected.type;
             actualField = actual.type;
-            if (expected.hash != actual.hash) {
+            if (expected.type == actual.type && expected.record != actual.record) {
+                fieldName = "record";
+                expectedField = expected.record;
+                actualField = actual.record;
+            } else if (expected.type == actual.type && expected.submission != actual.submission) {
+                fieldName = "submission";
+                expectedField = expected.submission;
+                actualField = actual.submission;
+            } else if (expected.type == actual.type && expected.vi != actual.vi) {
+                fieldName = "vi";
+                expectedField = expected.vi;
+                actualField = actual.vi;
+            } else if (expected.hash != actual.hash) {
                 fieldName = "state-hash";
                 expectedField = expected.hash;
                 actualField = actual.hash;
@@ -221,12 +236,13 @@ int main(int argc, char** argv) {
                 std::error_code expectedError, actualError;
                 const bool expectedExists = fs::exists(expectedPath, expectedError);
                 const bool actualExists = fs::exists(actualPath, actualError);
-                // Hidden/depth/coverage output is intentionally not emitted by
-                // the scalar backend; for required common layers, however, a
-                // missing artifact on only one side is a failed comparison.
-                const bool requiredLayer = std::string(name) == "rdram" ||
-                    std::string(name) == "tmem" || std::string(name) == "vi-color";
-                if (requiredLayer && (!expectedExists || !actualExists)) {
+                if (expectedExists != actualExists) {
+                    const bool optionalReferenceOnly = expectedExists && !actualExists &&
+                        (std::string(name) == "hidden" || std::string(name) == "vi-depth" ||
+                         std::string(name) == "vi-coverage");
+                    // The scalar backend intentionally lacks these reference
+                    // layers. Any other one-sided artifact is incomplete data.
+                    if (optionalReferenceOnly) continue;
                     printHeader("differ", options);
                     std::printf(",\"firstDifference\":\"layer-presence\",\"layer\":\"%s\",\"checkpoint\":%zu,\"expected\":%s,\"actual\":%s}\n",
                                 name, i, expectedExists ? "true" : "false",
