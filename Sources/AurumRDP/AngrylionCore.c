@@ -44,3 +44,40 @@ const uint8_t* n64video_hidden_rdram(void) {
 void n64video_set_vi_mode(int mode) {
     config.vi.mode = (enum vi_mode)mode;
 }
+
+// Test-only entry points call the pinned core's actual coordinate and fetch
+// functions. No coordinate formulas are duplicated in the adapter.
+void n64video_coordinate_probe_init(void) {
+    tcoord_init_lut();
+    tmem_init_lut();
+    for (unsigned i = 0; i < 4096; ++i)
+        state[0].tmem[i] = (uint8_t)(i * 73u + (i >> 3) * 19u + 11u);
+}
+
+void n64video_coordinate_probe(const uint32_t* input, uint32_t* output) {
+    struct rdp_state* wstate = &state[0];
+    const unsigned tilenum = (input[1] >> 24) & 7;
+    rdp_set_tile(wstate, input);
+    rdp_set_tile_size(wstate, input + 2);
+    struct tile* tile = &wstate->tile[tilenum];
+    int32_t s = (int32_t)input[4], t = (int32_t)input[5], maxs, maxt;
+    tcshift_cycle(tile, &s, &t, &maxs, &maxt);
+    s = TRELATIVE(s, tile->sl);
+    t = TRELATIVE(t, tile->tl);
+    tcclamp_cycle_light(tile, &s, &t, maxs, maxt);
+    tcmask(tile, &s, &t);
+    output[0] = (uint32_t)s;
+    output[1] = (uint32_t)t;
+    struct color texel;
+    fetch_texel(wstate, &texel, s, t, tilenum);
+    output[7] = (uint32_t)texel.r;
+    output[8] = (uint32_t)texel.g;
+    output[9] = (uint32_t)texel.b;
+    output[10] = (uint32_t)texel.a;
+    int32_t s0 = (int32_t)input[4], s1, s2, s3;
+    t = (int32_t)input[5];
+    tc_pipeline_copy(tile, &s0, &s1, &s2, &s3, &t);
+    output[2] = (uint32_t)s0; output[3] = (uint32_t)s1;
+    output[4] = (uint32_t)s2; output[5] = (uint32_t)s3;
+    output[6] = (uint32_t)t;
+}

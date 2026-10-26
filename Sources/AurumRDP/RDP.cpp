@@ -167,6 +167,12 @@ void Decoder::execute(std::span<const uint32_t> w) {
         load.tl = a & 0xfff;
         load.sh = (b >> 12) & 0xfff;
         load.th = b & 0xfff;
+        // LoadTile/LoadBlock/LoadTLUT also replace this tile's bounds, even
+        // when the upload handler is unavailable. Later draws see that state.
+        tileSizes_[tile * 4 + 0] = load.sl;
+        tileSizes_[tile * 4 + 1] = load.tl;
+        tileSizes_[tile * 4 + 2] = load.sh;
+        tileSizes_[tile * 4 + 3] = load.th;
         if (opcode == 0x33) load.dxt = load.th;
         if (!textureLoad || !textureLoad(load)) markUnsupported(w);
         break;

@@ -190,6 +190,10 @@ an 8-bit texel exactly.
 
 # Explicit texture fetch - 2026-10-24
 
+Historical limitation: these tests checked reference TMEM placement but used
+VI-style RGBA16 channel expectations. Direct reference texel comparisons on
+2026-10-26 found and corrected that decoding error; see the record below.
+
 ## Completed locally
 
 | Check | Actual result |
@@ -220,3 +224,52 @@ the uploader and the sampler against each other.
   texels inside the uploaded rectangle resolve.
 - **Filtering:** point sampling only. Three-point filtering, LOD, detail and
   sharpen are separate work and must not receive a nearest sample silently.
+
+# Point/copy texture coordinates - 2026-10-26
+
+## Completed locally
+
+The independent reference remains Angrylion-Plus at
+`9c8b9ed3e7d7f00dff8bc872ccdd3fba1a3673fc`. A development-only
+`--texture-coordinates input output` mode calls its actual coordinate and
+`fetch_texel` functions. Requests contain original SetTile/SetTileSize words
+and signed fixed-point S/T values; the separate Aurum executable decodes those
+words into rectangle snapshots and compares coordinates and texels.
+No reference library is linked into the production renderer or application.
+
+| Check | Actual result |
+| --- | --- |
+| Coordinate comparison | 1,279,760 requests matched point S/T and copy S[0..3]/T, seven integer outputs per request |
+| Signed inputs and shift | All 65,536 input bit patterns at all 16 shifts, on both axes; negative fractions, 16-bit truncation and sign extension included |
+| Bounds and addressing modes | All 16 masks and shift values, mirror/clamp combinations, fractional and reversed tile bounds, mask/mirror saturation at ten bits, and 10,000 seeded combinations |
+| Point vs copy | Point mapping clamps when enabled or mask=0; copy ignores clamp and increments S lanes after shift/origin conversion, before each lane's mask/mirror |
+| Point sampling | 977,243 accepted RGBA16/32 fetches matched the reference's actual texel channels from a shared deterministic 4 KiB TMEM image |
+| RGBA16 correction | RGB channels now replicate five bits to eight, and alpha becomes 0/255. Texture fetch is distinct from the existing VI scanout quantization |
+| Unsupported fetches | Non-RGBA formats, negative or overflowing addresses and unmodeled TMEM wrap remain explicitly rejected |
+| Decoder state | LoadTile, LoadBlock and LoadTLUT update tile bounds even without an accepting upload handler; later changes leave captured rectangles unchanged |
+| Negative controls | Corrupting a mapped coordinate or texel channel makes the comparison fail; a truncated probe is rejected |
+| Test isolation | CTest fixtures generate requests, run the independent reference process, then compare. Selecting only `texture-coordinates` also brings in its prerequisites |
+
+Full `scripts/build.sh` and `MTL_DEBUG_LAYER=1 python3 scripts/test.py` both
+exited 0. CTest passed 11/11. The test output directory started empty; the run
+also passed lifecycle checks, eight optimized Swift path startups, relocated
+bundle/dyld/signature checks, capture/replay and 20 matching layer comparisons
+(including XBUS wrap). A 200-byte runtime capture stayed within its budget and
+retained its terminal record. Local logs: `.build/m4-coordinate-build.log`,
+`.build/m4-coordinate-test.log`, and
+`.build/native/Testing/Temporary/LastTest.log`.
+
+The empty-directory run also verifies a correction to the preceding audit
+tests: they now copy freshly generated `reference/fill.*` artifacts rather than
+depend on a previous run's `reference/actual` directory. That dependency caused
+the earlier PR #2 head `278b860` to fail on clean CI.
+
+## Scope boundary
+
+This closes the signed, non-perspective point/copy coordinate slice of M4-05.
+The copy results are coordinates for a four-lane fetch, not a copy-cycle
+framebuffer implementation. TextureRectangle/Flip still report unsupported
+in production. Copy qword fetching, rectangle rasterization, combiner/blender,
+perspective and LOD, three-point filtering, and CI/IA/I/YUV sampling remain
+separate work. Neither this software-reference match nor a successful build
+establishes game compatibility or hardware accuracy.

@@ -56,10 +56,11 @@ int main(int argc, char** argv) {
                     require(sampler.fetch(store, tile, s, t, texel),
                             "RGBA16 fetch of reference TMEM failed");
                     const uint32_t value = 0x1000 + t * 0x100 + s;
-                    require(texel.r == ((value >> 8) & 0xf8) &&
-                            texel.g == ((value & 0x7c0) >> 3) &&
-                            texel.b == ((value & 0x3e) << 2) &&
-                            texel.a == (value & 1),
+                    const auto expand = [](uint32_t c) { return (c << 3) | (c >> 2); };
+                    require(texel.r == expand((value >> 11) & 31) &&
+                            texel.g == expand((value >> 6) & 31) &&
+                            texel.b == expand((value >> 1) & 31) &&
+                            texel.a == ((value & 1) ? 255u : 0u),
                             "RGBA16 channel decode differs");
                 }
             }
@@ -104,8 +105,8 @@ int main(int argc, char** argv) {
             require(sampler.fetch(uploader.store(), TileDescriptor{0, 2, 1, 0}, 2,
                                   0, texel),
                     "RGBA16 round-trip fetch");
-            require(texel.r == 0xf8 && texel.g == 0xf8 && texel.b == 0xf8 &&
-                    texel.a == 1,
+            require(texel.r == 255 && texel.g == 255 && texel.b == 255 &&
+                    texel.a == 255,
                     "RGBA16 round-trip color differs");
         }
 
@@ -117,6 +118,12 @@ int main(int argc, char** argv) {
                     "8-bit fetch accepted");
             require(!sampler.fetch(store, TileDescriptor{2, 0, 1, 0}, 0, 0, texel),
                     "4-bit fetch accepted");
+            require(!sampler.fetch(store, TileDescriptor{3, 2, 1, 0}, 0, 0, texel),
+                    "IA16 interpreted as RGBA");
+            require(!sampler.fetch(store, TileDescriptor{0, 2, 2, 0}, UINT32_MAX, 0, texel),
+                    "Overflowing S aliased TMEM");
+            require(!sampler.fetch(store, TileDescriptor{0, 2, 2, 0}, 0, 1u << 31, texel),
+                    "Overflowing T aliased TMEM");
             // A row base outside the 9-bit unit field is rejected: tmem 511
             // with line 1 puts row 1 at unit 512.
             require(sampler.fetch(store, TileDescriptor{0, 2, 1, 511}, 0, 0,

@@ -16,6 +16,35 @@ def run(args, **kwargs):
     subprocess.run([str(x) for x in args], cwd=root, check=True, timeout=45, **kwargs)
 
 run(["ctest", "--test-dir", root / ".build/native", "--output-on-failure"])
+# The CTest fixture chain always runs the independent coordinate reference.
+# Corrupt one mapped coordinate and one texel result to prove both comparison
+# paths reject bad output, and reject a probe truncated between word bytes.
+coordinate_dir = root / ".build/native/coordinate-tests"
+with tempfile.TemporaryDirectory(prefix="aurum-coordinate-negative-") as temp:
+    coordinate_cases = coordinate_dir / "cases.bin"
+    coordinate_reference = coordinate_dir / "reference.bin"
+    damaged = pathlib.Path(temp) / "reference.bin"
+    for field in (0, 7):
+        shutil.copyfile(coordinate_reference, damaged)
+        with damaged.open("r+b") as output:
+            for offset in range(8 + field * 4, min(damaged.stat().st_size, 8 + 44 * 1024), 44):
+                output.seek(offset)
+                value = struct.unpack("<I", output.read(4))[0]
+                output.seek(offset)
+                output.write(struct.pack("<I", value ^ 1))
+                if field == 0:
+                    break
+        rejected = subprocess.run([str(root / ".build/native/aurum-texture-coordinate-tests"),
+                                   "--compare", coordinate_cases, damaged],
+                                  capture_output=True, text=True, timeout=30)
+        assert rejected.returncode == 1 and f"field={field}" in rejected.stderr, rejected.stderr
+    truncated_probe = pathlib.Path(temp) / "truncated.bin"
+    truncated_probe.write_bytes(coordinate_cases.read_bytes()[:13])
+    rejected = subprocess.run([str(root / ".build/native/aurum-angrylion-reference"),
+                               "--texture-coordinates", truncated_probe, damaged],
+                              capture_output=True, text=True, timeout=30)
+    assert rejected.returncode == 1 and "Truncated coordinate probe" in rejected.stderr
+print("PASS: independent coordinate/texel negative controls and truncated probe rejection")
 run([sys.executable, root / "scripts/make_test_rom.py", tests / "fill.z64"])
 with tempfile.TemporaryDirectory(prefix="aurum-relocated-") as temp:
     relocated = pathlib.Path(temp) / "Aurum64.app"
@@ -158,7 +187,9 @@ run([root / ".build/native/aurum-reference-diff", reference_dir / "fill",
      replay_dir / "fill", tests / "fill.aurcap"])
 with tempfile.TemporaryDirectory(prefix="aurum-checkpoint-metadata-") as temp:
     changed = pathlib.Path(temp) / "actual"
-    shutil.copytree(reference_dir / "actual", changed)
+    changed.mkdir()
+    for artifact in reference_dir.glob("fill.*"):
+        shutil.copy2(artifact, changed)
     checkpoints = bytearray((changed / "fill.checkpoints").read_bytes())
     struct.pack_into("<Q", checkpoints, 16, struct.unpack_from("<Q", checkpoints, 16)[0] + 1)
     (changed / "fill.checkpoints").write_bytes(checkpoints)
@@ -169,7 +200,9 @@ with tempfile.TemporaryDirectory(prefix="aurum-checkpoint-metadata-") as temp:
         "Reference diff ignored checkpoint event metadata"
 with tempfile.TemporaryDirectory(prefix="aurum-missing-layer-") as temp:
     missing = pathlib.Path(temp) / "actual"
-    shutil.copytree(reference_dir / "actual", missing)
+    missing.mkdir()
+    for artifact in reference_dir.glob("fill.*"):
+        shutil.copy2(artifact, missing)
     (missing / "fill.rdram").unlink()
     absent = subprocess.run([str(root / ".build/native/aurum-reference-diff"),
                              reference_dir / "fill", missing / "fill", tests / "fill.aurcap"],
@@ -266,6 +299,18 @@ with tempfile.TemporaryDirectory(prefix="aurum-capped-") as temp:
         raise RuntimeError(f"Capped capture smoke exited {capped_result.returncode}")
     run([root / ".build/native/aurum-rdp-tests", root / ".build/native/AurumRDP.metallib",
          tests / "fill.rdp", tests / "fill.aurcap", capped_capture])
+    byte_capture = tests / "byte-capped.aurcap"
+    capped_env.pop("AURUM_AURCAP_MAX_VI")
+    capped_env.update({"AURUM_AURCAP": str(byte_capture), "AURUM_AURCAP_MAX_BYTES": "200"})
+    byte_result = subprocess.run([str(root / ".build/native/aurum-smoke"), tests / "fill.z64",
+         capped / "Contents/Frameworks", capped / "Contents/Resources", pathlib.Path(temp) / "byte-user"],
+         timeout=30, text=True, capture_output=True, env=capped_env)
+    assert byte_result.returncode == 0, byte_result.stderr
+    byte_data = byte_capture.read_bytes()
+    assert len(byte_data) <= 200 and byte_data.endswith(b"byte limit"), \
+        "Capture exceeded its byte budget or omitted the terminal reason"
+    run([root / ".build/native/aurum-aurcap-replay", byte_capture])
+    print("PASS: capture byte budget includes the terminal record")
 truncated = tests / "truncated.rdp"
 truncated.write_bytes((tests / "fill.rdp").read_bytes()[:-4])
 result = subprocess.run([str(root / ".build/native/aurum-rdp-tests"), str(root / ".build/native/AurumRDP.metallib"), str(truncated)],

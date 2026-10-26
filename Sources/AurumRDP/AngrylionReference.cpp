@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "AngrylionExports.h"
 #include "Capture.hpp"
+#include "TextureCoordinateProbe.hpp"
 
 extern "C" {
 #include <core/n64video.h>
@@ -242,6 +243,39 @@ struct Session {
 } // namespace
 
 int main(int argc, char** argv) {
+    if (argc == 4 && std::string(argv[1]) == "--texture-coordinates") {
+        try {
+            using namespace aurum::coordinate_probe;
+            std::ifstream input(argv[2], std::ios::binary);
+            std::ofstream output(argv[3], std::ios::binary | std::ios::trunc);
+            readMagic(input, kInputMagic);
+            writeMagic(output, kOutputMagic);
+            n64video_coordinate_probe_init();
+            Request request;
+            size_t count = 0;
+            while (readWords(input, request)) {
+                require(++count <= kMaxCases, "Too many coordinate probe cases.");
+                require(((request[0] >> 24) & 63) == 0x35 &&
+                        ((request[2] >> 24) & 63) == 0x32 &&
+                        ((request[1] >> 24) & 7) == ((request[3] >> 24) & 7) &&
+                        ((request[0] >> 21) & 7) == 0 &&
+                        (((request[0] >> 19) & 3) == 2 ||
+                         ((request[0] >> 19) & 3) == 3),
+                        "Invalid coordinate probe tile commands.");
+                Response response{};
+                n64video_coordinate_probe(request.data(), response.data());
+                writeWords(output, response);
+            }
+            require(count != 0, "Empty coordinate probe.");
+            output.flush();
+            require(bool(output), "Cannot finish coordinate probe output.");
+            std::printf("Reference: %zu point/copy coordinate and texel cases\n", count);
+            return 0;
+        } catch (const std::exception& error) {
+            std::fprintf(stderr, "aborted: %s\n", error.what());
+            return 1;
+        }
+    }
     if (argc < 2 || argc > 3) {
         std::fprintf(stderr, "Usage: aurum-angrylion-reference file.aurcap [output-prefix]\n");
         return 2;

@@ -21,8 +21,7 @@ struct TextureLoad {
     uint32_t dxt = 0;      // LoadBlock only
 };
 // A decoded TextureRectangle/TextureRectangleFlip (opcode 0x24/0x25). The
-// framebuffer, tile descriptor and tile size come from the decoder state at the
-// time of the command, so only the command's own fields are carried here.
+// framebuffer, tile descriptor and tile size are copied at command issue time.
 struct TextureRect {
     uint32_t tile = 0;
     uint32_t xh = 0, yh = 0, xl = 0, yl = 0;   // raw 12-bit edge fields
@@ -34,9 +33,8 @@ struct TextureRect {
     uint32_t fbFormat = 0, fbSize = 0, fbWidth = 0, fbAddress = 0;
     uint32_t tileFormat = 0, tileSize = 0, tileLine = 0, tileTmem = 0;
     uint32_t tileSl = 0, tileTl = 0, tileSh = 0, tileTh = 0;
-    // SetTile word-1 bits below the tile index: ct/mt/mask_t/shift_t/cs/ms/
-    // mask_s/shift_s. Non-zero means a coordinate mode this decoder does not
-    // model, so renderers must reject rather than approximate.
+    // SetTile word-1 below the tile index: palette/ct/mt/mask_t/shift_t/cs/ms/
+    // mask_s/shift_s. Consumers must validate format/palette and cycle support.
     uint32_t tileModes = 0;
 };
 struct UnsupportedContext {
