@@ -6,6 +6,7 @@ import struct
 import sys
 
 words = []
+textured = "--texture" in sys.argv[2:]
 def emit(word):
     words.append(word)
 def li(reg, value):
@@ -27,6 +28,24 @@ rdp = [
     0xF6000000 | (1276 << 12) | 956, 0,     # inclusive rectangle
     0xE9000000, 0,                         # full sync
 ]
+if textured:
+    # Original 8x8 checker texture. Half the texels are transparent so copy
+    # alpha rejection also exercises preservation of the orange background.
+    li(8, 0xA0130000)
+    texels = [((0xf800 if x < 4 else 0x07c0) if y < 4 else
+               (0x003e if x < 4 else 0xfffe)) | ((x + y) & 1)
+              for y in range(8) for x in range(8)]
+    for index in range(0, len(texels), 2):
+        store(8, index * 2, texels[index] << 16 | texels[index + 1])
+    li(8, 0xA0100000)
+    rdp[-2:-2] = [
+        0xFD100007, 0x00130000,           # RGBA16 source, stride 8
+        0xF5100400, (3 << 4) | (3 << 14), # tile line 2, mask 3 on S/T
+        0xF4000000, (28 << 12) | 28,      # LoadTile 8x8
+        0xEF200000, 1,                   # copy, alpha compare
+        0xE4000000 | (1244 << 12) | 924, (32 << 12) | 32,
+        0, (4096 << 16) | 1024,
+    ]
 for offset, word in enumerate(rdp):
     store(8, offset * 4, word)
 li(8, 0xA4100000)
@@ -69,7 +88,7 @@ emit(0x1000FFFF)  # beq zero, zero, self
 emit(0)
 rom = bytearray(4096)
 struct.pack_into(">4I", rom, 0, 0x80371240, 0xF, 0xA4000040, 0)
-rom[0x20:0x34] = b"AURUM OPEN TEST ROM".ljust(20, b" ")
+rom[0x20:0x34] = (b"AURUM TEXTURE TEST" if textured else b"AURUM OPEN TEST ROM").ljust(20, b" ")
 rom[0x3E] = ord("E")
 for i, word in enumerate(words):
     struct.pack_into(">I", rom, 0x40 + i * 4, word)

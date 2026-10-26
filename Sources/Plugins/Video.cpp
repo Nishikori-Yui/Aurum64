@@ -3,15 +3,17 @@
 #include "Capture.hpp"
 #include "DpcDispatch.hpp"
 #include "Renderer.hpp"
+#include "TextureUpload.hpp"
 #include <cstring>
 #include <fstream>
 #include <cstdlib>
 #include <utility>
 
-AUR_PLUGIN(M64PLUGIN_GFX, 0x020200, "Aurum Metal RDP (experimental fill/VI)")
+AUR_PLUGIN(M64PLUGIN_GFX, 0x020200, "Aurum Metal RDP (experimental fill/copy/VI)")
 namespace {
 GFX_INFO info{};
 aurum::rdp::Decoder decoder;
+aurum::texture::Uploader textures;
 std::unique_ptr<aurum::rdp::Renderer> renderer;
 std::vector<uint32_t> pixels;
 uint32_t width = 0, height = 0;
@@ -98,7 +100,7 @@ EXPORT int CALL RomOpen() {
     renderer = std::make_unique<aurum::rdp::Renderer>();
     std::string error;
     if (!renderer->initialize(aur_shader_path(), error)) { aur_fail(error.c_str()); return 0; }
-    decoder.reset(); width = height = 0; pixels.clear();
+    decoder.reset(); textures = {}; width = height = 0; pixels.clear();
     publishDiagnostics();
     capturePath = std::getenv("AURUM_AURCAP") ? std::getenv("AURUM_AURCAP") : "";
     captureRecords.clear(); captureSequence = 0;
@@ -123,6 +125,13 @@ EXPORT int CALL RomOpen() {
         std::string error;
         if (!renderer->fill(info.RDRAM, memorySize(), fill, error)) aur_fail(error.c_str());
     };
+    decoder.textureLoad = [](const aurum::rdp::TextureLoad& load) {
+        return textures.load(info.RDRAM, memorySize(), load);
+    };
+    decoder.textureRect = [](const aurum::rdp::TextureRect& rect) {
+        std::string error;
+        return renderer->textureCopy(info.RDRAM, memorySize(), rect, textures.store(), error);
+    };
     decoder.sync = [] { *info.MI_INTR_REG |= 0x20; info.CheckInterrupts(); };
     if (const char* path = std::getenv("AURUM_RDP_TRACE")) trace.open(path, std::ios::binary | std::ios::trunc);
     return 1;
@@ -132,7 +141,7 @@ EXPORT void CALL RomClosed() {
     if (trace.is_open()) trace.close();
     trace.clear(); capturePath.clear(); captureRecords.clear(); renderer.reset();
 }
-EXPORT void CALL AurumResetVideo() { decoder.reset(); pixels.clear(); width = height = 0; }
+EXPORT void CALL AurumResetVideo() { decoder.reset(); textures = {}; pixels.clear(); width = height = 0; }
 EXPORT void CALL ProcessRDPList() {
     uint32_t current = *info.DPC_CURRENT_REG & 0x00fffff8;
     const uint32_t start = current;

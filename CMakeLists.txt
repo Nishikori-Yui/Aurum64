@@ -60,6 +60,10 @@ target_include_directories(aurum-texture-coordinate-tests PRIVATE Sources/AurumR
 target_link_libraries(aurum-texture-coordinate-tests PRIVATE aurum-rdp-decode)
 add_executable(aurum-aurcap-replay Sources/AurumRDP/AurcapReplay.cpp)
 target_link_libraries(aurum-aurcap-replay PRIVATE aurum-capture aurum-rdp-decode)
+add_executable(aurum-metal-replay Sources/AurumRDP/AurcapReplay.cpp)
+target_compile_definitions(aurum-metal-replay PRIVATE AURUM_METAL_REPLAY)
+target_link_libraries(aurum-metal-replay PRIVATE aurum-rdp)
+add_dependencies(aurum-metal-replay shaders)
 add_library(angrylion-core STATIC
     Sources/AurumRDP/AngrylionCore.c
     third_party/angrylion-rdp-plus/src/core/parallel.cpp)
@@ -86,6 +90,10 @@ set_tests_properties(texture-coordinates-reference PROPERTIES FIXTURES_REQUIRED 
 add_test(NAME texture-coordinates COMMAND aurum-texture-coordinate-tests --compare "${COORDINATE_CASES}" "${COORDINATE_REFERENCE}")
 set_tests_properties(texture-coordinates PROPERTIES FIXTURES_REQUIRED coordinate-reference)
 add_test(NAME rdp COMMAND aurum-rdp-tests "${CMAKE_BINARY_DIR}/AurumRDP.metallib")
+add_executable(aurum-texture-copy-tests Tests/TextureCopyTests.cpp)
+target_link_libraries(aurum-texture-copy-tests PRIVATE aurum-rdp)
+add_dependencies(aurum-texture-copy-tests shaders)
+add_test(NAME texture-copy COMMAND aurum-texture-copy-tests "${CMAKE_BINARY_DIR}/AurumRDP.metallib")
 add_executable(aurum-presentation-tests Tests/PresentationTests.mm)
 target_compile_options(aurum-presentation-tests PRIVATE -fobjc-arc)
 target_link_libraries(aurum-presentation-tests PRIVATE "-framework Metal" "-framework Foundation")

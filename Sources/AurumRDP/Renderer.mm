@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "Renderer.hpp"
+#include "TextureCopy.hpp"
 #import <Metal/Metal.h>
 #include <algorithm>
 #include <cstring>
@@ -8,7 +9,7 @@ namespace aurum::rdp {
 struct Renderer::Impl {
     id<MTLDevice> device;
     id<MTLCommandQueue> queue;
-    id<MTLComputePipelineState> fillPipeline, viPipeline;
+    id<MTLComputePipelineState> fillPipeline, viPipeline, copyPipeline;
     id<MTLBuffer> ram, output;
     bool finish(id<MTLCommandBuffer> command, std::string& error) {
         [command commit]; [command waitUntilCompleted];
@@ -32,12 +33,45 @@ bool Renderer::initialize(const char* path, std::string& error) {
         if (!library) { error = e.localizedDescription.UTF8String; return false; }
         p.fillPipeline = [p.device newComputePipelineStateWithFunction:[library newFunctionWithName:@"fillRectangle"] error:&e];
         p.viPipeline = [p.device newComputePipelineStateWithFunction:[library newFunctionWithName:@"scanout"] error:&e];
+        p.copyPipeline = [p.device newComputePipelineStateWithFunction:[library newFunctionWithName:@"textureCopy"] error:&e];
         p.queue = [p.device newCommandQueue];
         p.ram = [p.device newBufferWithLength:8 * 1024 * 1024 options:MTLResourceStorageModeShared];
         p.output = [p.device newBufferWithLength:640 * 576 * 4 options:MTLResourceStorageModeShared];
-        if (!p.fillPipeline || !p.viPipeline || !p.queue || !p.ram || !p.output) {
+        if (!p.fillPipeline || !p.viPipeline || !p.copyPipeline || !p.queue || !p.ram || !p.output) {
             error = e.localizedDescription.UTF8String ?: "Cannot allocate Metal resources."; return false;
         }
+        return true;
+    }
+}
+bool Renderer::textureCopy(uint8_t* memory, size_t length, const TextureRect& rect,
+                           const aurum::tmem::Store& tmem, std::string& error) {
+    if (!memory || !impl->ram) { error = "Texture copy renderer is not ready."; return false; }
+    std::vector<aurum::texture::CopyWord> words;
+    if (!aurum::texture::makeCopyPlan(rect, length, words, error)) return false;
+    if (words.empty()) return true;
+    @autoreleasepool {
+        auto& p = *impl;
+        std::array<uint8_t, aurum::tmem::Store::kBytes> bytes;
+        tmem.copyBytes(bytes);
+        id<MTLBuffer> texture = [p.device newBufferWithBytes:bytes.data() length:bytes.size()
+                                                   options:MTLResourceStorageModeShared];
+        id<MTLBuffer> plan = [p.device newBufferWithBytes:words.data()
+                            length:words.size() * sizeof(words[0]) options:MTLResourceStorageModeShared];
+        if (!texture || !plan) { error = "Cannot allocate texture copy buffers."; return false; }
+        memcpy(p.ram.contents, memory, length);
+        const uint32_t alphaCompare = rect.otherModesLo & 1u;
+        id<MTLCommandBuffer> command = [p.queue commandBuffer];
+        id<MTLComputeCommandEncoder> encoder = [command computeCommandEncoder];
+        [encoder setComputePipelineState:p.copyPipeline];
+        [encoder setBuffer:p.ram offset:0 atIndex:0];
+        [encoder setBuffer:texture offset:0 atIndex:1];
+        [encoder setBuffer:plan offset:0 atIndex:2];
+        [encoder setBytes:&alphaCompare length:sizeof(alphaCompare) atIndex:3];
+        [encoder dispatchThreads:MTLSizeMake(words.size(), 1, 1)
+          threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+        [encoder endEncoding];
+        if (!p.finish(command, error)) return false;
+        memcpy(memory, p.ram.contents, length);
         return true;
     }
 }

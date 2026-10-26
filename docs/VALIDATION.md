@@ -273,3 +273,46 @@ in production. Copy qword fetching, rectangle rasterization, combiner/blender,
 perspective and LOD, three-point filtering, and CI/IA/I/YUV sampling remain
 separate work. Neither this software-reference match nor a successful build
 establishes game compatibility or hardware accuracy.
+
+# First production Metal texture rectangles - 2026-10-26
+
+The M4-07 RGBA16 copy slice now runs in the production video plugin. Mature
+emulator code was used to study behavior and as an independent executable
+reference; the CPU address planner and Metal kernel are original code.
+
+| Check | Actual result |
+| --- | --- |
+| Independent copy comparison | 259 original TextureRectangle/Flip draws match pinned Angrylion RDRAM, TMEM and diagnostic VI-color layers; accepted draws report Unsupported=0 |
+| Matrix coverage | 128 cases each in 4/8 MiB RDRAM, separate framebuffer slots to preserve every case's result, odd stride/base halfword, both TMEM halves, signed/fractional S/T and derivatives, masks, mirrors, shifts, tile origins, clamp bypass, alpha, scissor and partial qwords |
+| Memory order | Within one submission, a completed GPU framebuffer draw is uploaded into another TMEM tile and drawn again; complete RDRAM/TMEM match |
+| Production ROM | Original 277-instruction ROM, 11 RDP commands, eight VI events, zero Unsupported and 1024 silent audio frames; all 320x240 Metal scanout pixels match, including transparent texels preserving the fill background and the RSP marker |
+| Write ownership | One GPU invocation per complete host word, including words shared across odd-stride rows; a neighboring halfword remains intact |
+| Rejection | Non-copy cycles, non-RGBA16 formats, fractional rectangle/scissor edges, perspective/TLUT/depth/field modes, invalid destination layout and unmodeled TMEM wrap reject without modifying RDRAM, including failure after a valid first row |
+| Immutable draw state | Subsequent scissor/OtherModes commands leave previously decoded rectangle snapshots unchanged |
+
+The production plugin now wires texture uploads/draws and clears TMEM on new
+ROM/reset. `aurum-metal-replay` exercises this same Renderer in an independent
+process; scalar replay retains no texture-draw handler and reports the basic
+texture fixture unsupported. Replay's VI-color layer is still the diagnostic
+scalar export; the ROM separately verifies the production Metal VI scanout.
+Hidden state, VI depth and VI coverage are explicitly unavailable.
+
+`scripts/build.sh` and `MTL_DEBUG_LAYER=1 python3 scripts/test.py` exited 0.
+CTest passed 12/12. The test directory started empty; lifecycle, eight optimized
+Swift temporary-path startups, relocated bundle/dyld/signatures, all prior
+coordinate/upload/fetch checks and bounded capture tests passed. There are now
+24 matching layer comparisons, including four new Metal texture captures.
+Logs: `.build/m4-copy-full-build.log`, `.build/m4-copy-full-test.log` and
+`.build/native/Testing/Temporary/LastTest.log`.
+
+During matrix expansion, a 1 MiB data region plus its four-byte address exceeded
+the capture payload cap. The fixture now divides seed data into bounded records;
+the reader's limit was retained. Distinct framebuffer slots prevent later
+draws from concealing earlier errors.
+
+This is a restricted copy path, not completion of M4 or a game compatibility
+claim. Integer screen/scissor edges, RGBA16 destination and texture, copy cycle
+and optional one-bit alpha comparison are supported. Other raw OtherModes,
+wrapped addresses, bank conflicts and framebuffer spans crossing the declared
+stride remain rejected. Three-point filtering, remaining texture formats,
+triangles, combiner/blender/depth/coverage and accurate VI remain work ahead.

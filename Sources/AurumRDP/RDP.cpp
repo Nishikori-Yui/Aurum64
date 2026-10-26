@@ -60,6 +60,7 @@ void Decoder::reset() {
     tileSizes_.fill(0);
     tileModes_.fill(0);
     sx0 = sy0 = sx1 = sy1 = 0;
+    scissorMode = otherModesHi = otherModesLo = 0;
     haveState = false;
 }
 uint64_t Decoder::opcodeCount(uint8_t opcode) const {
@@ -120,11 +121,14 @@ void Decoder::execute(std::span<const uint32_t> w) {
     case 0x2d:
         sx0 = (a >> 12) & 4095; sy0 = a & 4095;
         sx1 = (b >> 12) & 4095; sy1 = b & 4095;
+        scissorMode = (b >> 24) & 3;
         // Field/interlace scissoring is not implemented.
         if (b & 0x03000000) markUnsupported(w);
         haveState = true;
         break;
     case 0x2f:
+        otherModesHi = a & 0xffffff;
+        otherModesLo = b;
         cycle = (a >> 20) & 3;
         imageReadEn = (b >> 6) & 1;
         zUpdateEn = (b >> 5) & 1;
@@ -202,6 +206,9 @@ void Decoder::execute(std::span<const uint32_t> w) {
         rect.tileSh = tileSizes_[rect.tile * 4 + 2];
         rect.tileTh = tileSizes_[rect.tile * 4 + 3];
         rect.tileModes = tileModes_[rect.tile];
+        rect.clipXh = sx0; rect.clipYh = sy0; rect.clipXl = sx1; rect.clipYl = sy1;
+        rect.scissorMode = scissorMode;
+        rect.otherModesHi = otherModesHi; rect.otherModesLo = otherModesLo;
         if (!textureRect || !textureRect(rect)) markUnsupported(w);
         break;
     }

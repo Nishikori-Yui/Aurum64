@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 #include "MemoryBus.hpp"
+#include "RDP.hpp"
 #include "Tmem.hpp"
 #include <array>
 #include <cstddef>
@@ -34,6 +35,19 @@ public:
     static constexpr uint32_t kTmemWords16 = 2048;   // 4 KiB of halfwords
     static constexpr uint32_t kBankWords16 = 1024;
     static constexpr uint32_t kTmemBytes = 4096;
+
+    bool load(const uint8_t* rdram, size_t length, const aurum::rdp::TextureLoad& load) {
+        if (load.tileSize != load.tiSize) return false;
+        setTextureImage(load.tiFormat, load.tiSize, load.tiWidth, load.tiAddress);
+        setTile(load.tile, load.tileTmem, load.tileLine);
+        if (load.opcode == 0x30)
+            return loadTlut(rdram, length, load.tile, load.sl, load.tl, load.sh, load.th);
+        if (load.opcode == 0x33)
+            return loadBlock(rdram, length, load.tile, load.sl, load.tl, load.sh, load.dxt);
+        if (load.opcode == 0x34)
+            return loadTile(rdram, length, load.tile, load.sl, load.tl, load.sh, load.th);
+        return false;
+    }
 
     void setTextureImage(uint32_t format, uint32_t size, uint32_t width,
                          uint32_t address) {

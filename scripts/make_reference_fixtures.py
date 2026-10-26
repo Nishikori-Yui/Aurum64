@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Generate original, self-contained RDP/VI capture fixtures."""
 import pathlib
+import random
 import struct
 import sys
 
@@ -406,6 +407,82 @@ def texture_tlut_fixture() -> bytes:
     ])
 
 
+def texture_copy_fixture(memory_bytes: int = 8 << 20, matrix: bool = False) -> bytes:
+    """Original RGBA16 copy draws: no ROM data or upstream renderer code."""
+    width, height = 32, 16
+    source = b"".join(struct.pack(">H", ((x * 3 & 31) << 11) |
+                                 ((y * 5 & 31) << 6) | ((x + y & 31) << 1) |
+                                 ((x ^ y) & 1))
+                      for y in range(height) for x in range(width))
+    framebuffer = TEXTURE_FB + 2  # preserve a neighboring halfword
+    stride = 63                  # adjacent rows can share one host word
+    records = [initial(memory_bytes), memory(2, TEXTURE_SRC, source)]
+    seed = b"\xa5\x5a" * ((8192 * 128 if matrix else 8192) // 2)
+    # Each record also contains a four-byte address; stay below the 1 MiB
+    # payload cap even when seeding an entire matrix of independent targets.
+    for offset in range(0, len(seed), 1 << 19):
+        records.append(memory(len(records) + 1, TEXTURE_FB + offset, seed[offset:offset + (1 << 19)]))
+    sequence = len(records) + 1
+
+    def submit(words):
+        nonlocal sequence
+        records.append(rdp(sequence, 0x100000 + (sequence - 4) * 0x100, words))
+        sequence += 1
+
+    base = 257 if matrix else 1
+    submit(set_texture_image(0, 2, width, TEXTURE_SRC) +
+           set_tile(0, 0, 2, width // 4, base) +
+           load_tile(0, 0, 0, (width - 1) * 4, (height - 1) * 4) +
+           set_image(2, framebuffer, stride) + scissor(0, 0, 62 * 4, 64 * 4))
+    rng = random.Random(0xA64007)
+    for index in range(128 if matrix else 1):
+        flip = bool(index & 1)
+        x0, y0 = (rng.randrange(3, 25), rng.randrange(3, 25)) if matrix else (1, 2)
+        x1, y1 = x0 + rng.randrange(1, 34), y0 + rng.randrange(1, 20)
+        clip_x0, clip_y0 = (x0 + index % 5, y0 + index % 4) if matrix else (0, 0)
+        clip_x1, clip_y1 = min(61, x1 - index % 3), min(63, y1 + 1 - index % 4)
+        modes = (5 << 4) | (4 << 14)  # S/T mask
+        if index & 2:
+            modes |= 1 << 8 | 1 << 18  # mirror
+        if index & 4:
+            modes |= 1 << 9 | 1 << 19  # clamp ignored in copy
+        if matrix:
+            modes |= rng.choice((0, 1, 2, 15)) | rng.choice((0, 1, 2, 15)) << 10
+        tile = set_tile(0, 0, 2, width // 4, base)
+        tile[1] |= modes
+        sl, tl = (index % 3 * 4, index % 4 * 4) if matrix else (0, 0)
+        s = rng.randrange(-2000, 2000) if matrix else 0
+        t = rng.randrange(-1000, 1000) if matrix else 0
+        ds, dt = (rng.choice((4096, 2048, 1024, -4096, 511, -33)),
+                  rng.choice((1024, 512, -1024, 4096, 127, -31))) if matrix else (4096, 1024)
+        destination = framebuffer + (index * 8192 if matrix else 0)
+        submit(set_image(2, destination, stride) +
+               tile + [0xf2000000 | sl << 12 | tl, (sl + 124) << 12 | (tl + 60)] +
+               scissor(clip_x0 * 4, clip_y0 * 4, clip_x1 * 4, clip_y1 * 4) +
+               [0xef200000, index & 1,
+                (0xe5000000 if flip else 0xe4000000) | x1 * 4 << 12 | y1 * 4,
+                x0 * 4 << 12 | y0 * 4, (s & 65535) << 16 | (t & 65535),
+                (ds & 65535) << 16 | (dt & 65535)] + TEXTURE_SYNC)
+    records.append(vi(sequence, 2, framebuffer, stride))
+    return serialize(records)
+
+
+def texture_copy_feedback_fixture() -> bytes:
+    """A completed GPU draw becomes the next upload's RDRAM source."""
+    pixels = b"".join(struct.pack(">H", 0x4001 + y * 0x100 + x * 2)
+                       for y in range(8) for x in range(8))
+    words = set_texture_image(0, 2, 8, TEXTURE_SRC) + set_tile(0, 0, 2, 2, 0)
+    words += load_tile(0, 0, 0, 28, 28)
+    words += set_image(2, TEXTURE_FB, 16) + scissor(0, 0, 64, 32) + [0xef200000, 0]
+    words += [0xe4000000 | 28 << 12 | 28, 0, 0, 4096 << 16 | 1024]
+    words += set_texture_image(0, 2, 16, TEXTURE_FB) + set_tile(1, 0, 2, 2, 32)
+    words += load_tile(1, 0, 0, 28, 28)
+    words += [0xe4000000 | 60 << 12 | 28, 1 << 24 | 32 << 12, 0, 4096 << 16 | 1024]
+    words += TEXTURE_SYNC
+    return serialize([initial(4 << 20), memory(2, TEXTURE_SRC, pixels),
+                      rdp(3, 0x100000, words), vi(4, 2, TEXTURE_FB, 16)])
+
+
 def write_all(destination: pathlib.Path) -> None:
     destination.mkdir(parents=True, exist_ok=True)
     fixtures = {
@@ -426,6 +503,10 @@ def write_all(destination: pathlib.Path) -> None:
         "texture_8bit_offset.aurcap": texture_8bit_offset_fixture(),
         "sampler_rgba16.aurcap": sampler_rgba16_fixture(),
         "sampler_rgba32.aurcap": sampler_rgba32_fixture(),
+        "texture_copy.aurcap": texture_copy_fixture(),
+        "texture_copy_matrix4.aurcap": texture_copy_fixture(4 << 20, True),
+        "texture_copy_matrix8.aurcap": texture_copy_fixture(8 << 20, True),
+        "texture_copy_feedback.aurcap": texture_copy_feedback_fixture(),
     }
     for name, data in fixtures.items():
         (destination / name).write_bytes(data)

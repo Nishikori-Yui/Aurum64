@@ -36,6 +36,8 @@ struct TextureRect {
     // SetTile word-1 below the tile index: palette/ct/mt/mask_t/shift_t/cs/ms/
     // mask_s/shift_s. Consumers must validate format/palette and cycle support.
     uint32_t tileModes = 0;
+    uint32_t clipXh = 0, clipYh = 0, clipXl = 0, clipYl = 0;
+    uint32_t scissorMode = 0, otherModesHi = 0, otherModesLo = 0;
 };
 struct UnsupportedContext {
     uint32_t valid = 0, opcode = 0, wordCount = 0, capturedWords = 0;
@@ -116,6 +118,7 @@ private:
     std::array<uint32_t, 32> tileSizes_{};
     std::array<uint32_t, 8> tileModes_{};
     uint32_t sx0 = 0, sy0 = 0, sx1 = 0, sy1 = 0;
+    uint32_t scissorMode = 0, otherModesHi = 0, otherModesLo = 0;
     void markUnsupported(std::span<const uint32_t> words);
 };
 }

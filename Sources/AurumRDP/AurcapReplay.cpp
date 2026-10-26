@@ -3,6 +3,9 @@
 #include "MemoryBus.hpp"
 #include "RDP.hpp"
 #include "TextureUpload.hpp"
+#ifdef AURUM_METAL_REPLAY
+#include "Renderer.hpp"
+#endif
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -206,12 +209,19 @@ void write(const std::string& prefix, const char* suffix, const void* bytes, siz
 }
 
 int main(int argc, char** argv) {
+#ifdef AURUM_METAL_REPLAY
+    if (argc != 4) {
+        std::fprintf(stderr, "Usage: aurum-metal-replay file.aurcap output-prefix library.metallib\n");
+        return 2;
+    }
+#else
     if (argc < 2 || argc > 3) {
         std::fprintf(stderr, "Usage: aurum-aurcap-replay file.aurcap [output-prefix]\n");
         return 2;
     }
+#endif
     try {
-        const bool emitLayers = argc == 3;
+        const bool emitLayers = argc >= 3;
         const std::string prefix = emitLayers ? argv[2] : std::string{};
         std::ifstream input(argv[1], std::ios::binary);
         if (!input) throw std::runtime_error("Cannot open capture.");
@@ -235,6 +245,17 @@ int main(int argc, char** argv) {
 
         Replay output{memoryBytes};
         aurum::rdp::Decoder decoder;
+#ifdef AURUM_METAL_REPLAY
+        aurum::rdp::Renderer renderer;
+        require(renderer.initialize(argv[3], error), error.c_str());
+        decoder.fill = [&](const aurum::rdp::Fill& fill) {
+            require(renderer.fill(output.rdram.data(), output.rdram.size(), fill, error), error.c_str());
+        };
+        decoder.textureRect = [&](const aurum::rdp::TextureRect& rect) {
+            return renderer.textureCopy(output.rdram.data(), output.rdram.size(), rect,
+                                        output.textures.store(), error);
+        };
+#else
         decoder.fill = [&](const aurum::rdp::Fill& fill) {
             const uint32_t bytes = fill.size == 2 ? 2 : 4;
             for (uint32_t y = fill.y0; y < fill.y1; ++y) {
@@ -254,29 +275,9 @@ int main(int argc, char** argv) {
                 }
             }
         };
+#endif
         decoder.textureLoad = [&](const aurum::rdp::TextureLoad& load) {
-            // Only the 8-bit, RGBA16 and RGBA32 paths are modeled. Anything
-            // else stays reported as unsupported instead of producing a
-            // plausible-looking TMEM.
-            if (load.tiSize != 1 && load.tiSize != 2 && load.tiSize != 3)
-                return false;
-            // TMEM accumulates across uploads, so the same store is reused.
-            // A rejected upload leaves it untouched.
-            aurum::texture::Uploader& uploader = output.textures;
-            uploader.setTextureImage(load.tiFormat, load.tiSize, load.tiWidth,
-                                     load.tiAddress);
-            uploader.setTile(load.tile, load.tileTmem, load.tileLine);
-            if (load.opcode == 0x30)
-                return uploader.loadTlut(output.rdram.data(), output.rdram.size(),
-                                         load.tile, load.sl, load.tl, load.sh,
-                                         load.th);
-            if (load.opcode == 0x33)
-                return uploader.loadBlock(output.rdram.data(),
-                                          output.rdram.size(), load.tile,
-                                          load.sl, load.tl, load.sh, load.dxt);
-            return uploader.loadTile(output.rdram.data(), output.rdram.size(),
-                                     load.tile, load.sl, load.tl, load.sh,
-                                     load.th);
+            return output.textures.load(output.rdram.data(), output.rdram.size(), load);
         };
         replay(decoder, output, records);
         if (emitLayers) {
@@ -316,7 +317,11 @@ int main(int argc, char** argv) {
             std::ofstream manifest(prefix + ".manifest", std::ios::binary | std::ios::trunc);
             require(bool(manifest), "Cannot write replay manifest.");
             manifest << "format=aurum-reference-layers/1\n"
+#ifdef AURUM_METAL_REPLAY
+                        "engine=aurum-metal-replay\n"
+#else
                         "engine=aurum-scalar-replay\n"
+#endif
                         "rdram=host-word-swapped:N64ByteAddress:whole\n"
                         "tmem=4096:hardware-byte-layout\n"
                         "vi-color=RGBA8:R,G,B,A little-endian\n"

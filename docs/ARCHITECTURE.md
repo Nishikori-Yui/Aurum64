@@ -33,6 +33,18 @@ VI similarly snapshots RDRAM and completes scanout before publishing host pixels
 This is intentionally conservative and expensive. It avoids unsynchronized GPU
 writes into CPU-owned memory; it is not a zero-copy or optimized design.
 
+The video plugin owns a persistent 4 KiB TMEM store, cleared on new ROM/reset.
+LoadTile/Block/TLUT callbacks use the same bounded uploader as diagnostic replay.
+TextureRectangle/Flip snapshots carry their issue-time tile, scissor and raw
+OtherModes. The initial texture path accepts integer RGBA16 copy rectangles.
+A CPU planner validates the entire draw, maps each qword's S/T coordinates and
+groups destinations by host word. The plan contains only addresses; a Metal
+kernel reads TMEM halfwords, applies optional one-bit alpha comparison and writes
+both framebuffer lanes. The planner merges words shared by neighboring rows or
+odd framebuffer bases, so each GPU invocation has exclusive ownership. Unsupported
+draws leave RDRAM untouched. Completion and CPU readback precede subsequent uploads,
+which allows a rendered framebuffer to become a texture source.
+
 The MetalKit view uses the same compiled presentation shaders as the offscreen
 test. Its single shared texture is not updated until the previous GPU read has
 completed. Main-thread waits are an explicit temporary limitation, to be replaced
@@ -59,8 +71,16 @@ layer format for Aurum's supported fill path. Its current RDRAM result matches
 Angrylion on the generated fill fixture, including the submitted command bytes.
 Its direct VI layer follows the reference's active-area semantics (packed
 H/V start bounds, x/y scale dimensions, and filtered border crop) and now
-matches the 205x240 RGBA8 frames pixel-for-pixel. Missing hidden/TMEM/depth/
+matches the 205x240 RGBA8 frames pixel-for-pixel. Verified uploads emit TMEM;
+missing hidden/depth/
 coverage layers are reported as unavailable by the diff tool.
+
+`aurum-metal-replay` shares the capture reader, state checkpoints and diagnostic
+VI-color export, but dispatches fill/copy through the production Metal renderer.
+It has no software texture-draw fallback. Scalar replay still reports texture
+draws as unsupported. Independent differential fixtures check all framebuffer
+bytes and TMEM, including a draw-to-upload dependency within one submission.
+The neutral v1 state summary remains a comparison subset, not a full save state.
 
 ## Audio and controls
 
@@ -77,7 +97,8 @@ keys. Native settings replace SDL keybindings, which are disabled in the core.
 ## Deliberate omissions
 
 - CPU dynarec, RSP vector differential tests and cancellation inside an infinite RSP task.
-- Full RDP, hidden coverage/depth state, TMEM, VI filtering/interlace and accurate DP scheduling.
+- Full RDP, hidden coverage/depth state, remaining texture formats/filtering,
+  VI filtering/interlace and accurate DP scheduling.
 - Portable save states: core state alone omits the external decoder/renderer state.
 - Multiple controllers, remapping, rumble, VRU, netplay and 64DD.
 - Hardened-runtime signing, notarization, updater and public release pipeline.

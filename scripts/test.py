@@ -46,6 +46,7 @@ with tempfile.TemporaryDirectory(prefix="aurum-coordinate-negative-") as temp:
     assert rejected.returncode == 1 and "Truncated coordinate probe" in rejected.stderr
 print("PASS: independent coordinate/texel negative controls and truncated probe rejection")
 run([sys.executable, root / "scripts/make_test_rom.py", tests / "fill.z64"])
+run([sys.executable, root / "scripts/make_test_rom.py", tests / "texture.z64", "--texture"])
 with tempfile.TemporaryDirectory(prefix="aurum-relocated-") as temp:
     relocated = pathlib.Path(temp) / "Aurum64.app"
     shutil.copytree(root / "dist/Aurum64.app", relocated)
@@ -64,6 +65,10 @@ with tempfile.TemporaryDirectory(prefix="aurum-relocated-") as temp:
     loaded = [line for line in output.stderr.splitlines() if line.startswith("dyld[")]
     assert not any("/opt/homebrew/" in line or "libaurum-" in line and str(root) in line for line in loaded), "Unbundled library loaded"
     assert any("libSDL3" in line for line in loaded) or not any("sdl2-compat" in line for line in loaded)
+    texture_env = {k: v for k, v in env.items() if k not in ("AURUM_AURCAP", "AURUM_RDP_TRACE")}
+    run([root / ".build/native/aurum-smoke", tests / "texture.z64",
+         relocated / "Contents/Frameworks", relocated / "Contents/Resources",
+         tests / "texture-user", "--texture"], env=texture_env)
     run([sys.executable, root / "Tests/lifecycle.py", tests, relocated])
     run(["codesign", "--verify", "--deep", "--strict", relocated])
     # Use the same bundle path resolution and transient Swift-to-C strings as the UI.
@@ -236,6 +241,27 @@ for fixture in ("matrix", "boundary4", "boundary8", "texture", "texture_stride",
 # so the sampler is checked against hardware bytes and not only against the
 # uploader that wrote them.
 run([root / ".build/native/aurum-texture-fetch-tests", fixtures])
+
+# Exercise the same Renderer used by the production plugin, in a process
+# separate from the pinned software reference. Scalar replay has no draw
+# handler for these textures and must still report them as unsupported.
+for fixture in ("texture_copy", "texture_copy_matrix4", "texture_copy_matrix8",
+                "texture_copy_feedback"):
+    capture = fixtures / f"{fixture}.aurcap"
+    expected, actual = fixtures / f"{fixture}.ref", fixtures / f"{fixture}.metal"
+    run([root / ".build/native/aurum-angrylion-reference", capture, expected])
+    rendered = subprocess.run([str(root / ".build/native/aurum-metal-replay"), capture, actual,
+                               root / ".build/native/AurumRDP.metallib"],
+                              capture_output=True, text=True, timeout=30)
+    assert rendered.returncode == 0, rendered.stderr
+    assert json.loads(rendered.stdout)["unsupported"] == 0, rendered.stdout
+    assert "engine=aurum-metal-replay" in pathlib.Path(str(actual) + ".manifest").read_text()
+    run([root / ".build/native/aurum-reference-diff", expected, actual, capture])
+    if fixture == "texture_copy":
+        scalar = subprocess.run([str(root / ".build/native/aurum-aurcap-replay"), capture],
+                                capture_output=True, text=True, timeout=30)
+        assert scalar.returncode == 0 and json.loads(scalar.stdout)["unsupported"] == 1
+print("PASS: 259 actual Metal texture draws match independent reference RDRAM/TMEM/color layers")
 
 # Pin the memory record's byte mapping to the independently validated fill
 # path: both fixtures write the same texels, so the reference engine must

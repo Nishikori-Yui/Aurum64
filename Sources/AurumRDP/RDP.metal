@@ -3,6 +3,24 @@
 using namespace metal;
 struct Fill { uint address, width, size, color, x0, y0, x1, y1; };
 struct Scanout { uint origin, stride, size, width, height, xScale, yScale, xOffset, yOffset, length; };
+struct CopyWord { uint word, high, low; };
+
+kernel void textureCopy(device uint* ram [[buffer(0)]], device const ushort* tmem [[buffer(1)]],
+                        device const CopyWord* plan [[buffer(2)]],
+                        constant uint& alphaCompare [[buffer(3)]],
+                        uint index [[thread_position_in_grid]]) {
+    CopyWord item = plan[index];
+    uint value = ram[item.word];
+    for (uint lane = 0; lane < 2; ++lane) {
+        uint source = lane == 0 ? item.high : item.low;
+        if (source == 0xffffffffu) continue;
+        uint texel = tmem[source];
+        if (alphaCompare && !(texel & 1u)) continue;
+        uint shift = lane == 0 ? 16 : 0;
+        value = (value & ~(65535u << shift)) | (texel << shift);
+    }
+    ram[item.word] = value;
+}
 
 kernel void fillRectangle(device uint* ram [[buffer(0)]], constant Fill& f [[buffer(1)]],
                           constant uint& length [[buffer(2)]], uint word [[thread_position_in_grid]]) {
