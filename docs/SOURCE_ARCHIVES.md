@@ -61,8 +61,12 @@ and path. It refuses to overwrite existing files and does not publish anything.
   to the archived upstream source.
 
 Known private/generated paths such as top-level `PrivateDocs`, `.build`, `dist`,
-ROM/save/capture files and `.env` files are rejected if tracked. Unsafe paths or
-symlinks also fail the export, and failed runs leave no partial destination.
+ROM/save/capture files and `.env` files are rejected if tracked. The top-level
+`SOURCE_MANIFEST.json` name is reserved for the generated manifest, including
+directory and case variants. File and implied directory paths that collide
+under case folding or Unicode normalization are rejected, so they cannot
+overwrite one another on default macOS volumes. Unsafe paths or symlinks also
+fail the export, and failed runs leave no partial destination.
 These filename checks are not a general secret scanner: review the selected
 commit before sharing. The manifest's lack of local paths does not sanitize
 paths, URLs or secrets someone has committed inside source files.
@@ -81,9 +85,12 @@ python3 -B -m unittest discover -s Tests -p 'test_source_archive.py' -v
 Tests create disposable local Git repositories with synthetic data. They cover
 dirty checkouts and indexes, advanced submodule checkouts, recursive gitlinks,
 linked worktrees, missing dependencies, hashes, file modes, symlinks, privacy
-guards, failure cleanup and output protection. No existing checkout, build
-directory, ROM, app process or GPU is used.
+guards, macOS path collisions, extraction round trips, failure cleanup and
+concurrent output protection. No existing checkout, build directory, ROM, app
+process or GPU is used.
 
 The separate `Source archive` workflow runs these tests and compares two real
-repository exports on Linux. It does not alter the macOS build workflow, upload
-archives or create a release.
+repository exports on Linux using Python 3.9, 3.12 and 3.14. Each version checks
+its own repeated output; the workflow does not require identical compressed
+bytes across Python/zlib versions. It does not alter the macOS build workflow,
+upload archives or create a release.

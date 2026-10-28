@@ -12,6 +12,7 @@ from pathlib import Path, PurePosixPath
 import subprocess
 import tarfile
 import tempfile
+import unicodedata
 
 
 MANIFEST = "SOURCE_MANIFEST.json"
@@ -34,10 +35,26 @@ def git(*args, allowed_codes=(0,)):
 
 def relative_path(value):
     parts = value.split("/")
-    if (not value or any(part in {"", ".", "..", ".git"} for part in parts)
+    if (not value or any(part.casefold() in {"", ".", "..", ".git"} for part in parts)
             or "\\" in value or any(ord(c) < 32 or ord(c) == 127 for c in value)):
         raise ArchiveError(f"Unsafe source path: {value!r}")
     return value
+
+
+def validate_archive_paths(paths):
+    # macOS commonly extracts onto case-insensitive, normalization-insensitive
+    # volumes. Check implied directories too, before publishing an unusable tar.
+    seen = {}
+    for path in paths:
+        parts = path.split("/")
+        for index in range(1, len(parts) + 1):
+            name = "/".join(parts[:index])
+            key = unicodedata.normalize("NFD", name.casefold())
+            kind = "file" if index == len(parts) else "directory"
+            previous = seen.get(key)
+            if previous is not None and (previous != (name, kind) or kind == "file"):
+                raise ArchiveError(f"Archive paths collide on macOS: {previous[0]!r} and {name!r}")
+            seen[key] = (name, kind)
 
 
 @dataclass(frozen=True)
@@ -83,7 +100,8 @@ def collect(repository, commit, prefix="", ancestors=()):
         mode, kind, object_id = metadata.decode("ascii").split()
         path = relative_path(raw_path.decode("utf-8"))
         parts = PurePosixPath(path).parts
-        if (not prefix and (parts[0].lower() in PRIVATE_ROOTS or path == MANIFEST)):
+        if (not prefix and (parts[0].lower() in PRIVATE_ROOTS
+                            or parts[0].casefold() == MANIFEST.casefold())):
             raise ArchiveError(f"Private/generated/reserved path is tracked: {path}")
         suffix = PurePosixPath(path).suffix.lower()
         if (suffix in PRIVATE_SUFFIXES or (suffix.startswith(".st") and suffix[3:].isdigit())
@@ -192,6 +210,7 @@ def create_archive(root, revision, output):
                             f"{revision}^{{commit}}").decode().strip()
     timestamp = int(repository.run("show", "-s", "--format=%ct", commit))
     entries, modules = collect(repository, commit)
+    validate_archive_paths([entry.path for entry in entries] + [MANIFEST])
     prefix = f"Aurum64-{commit[:12]}-source"
     manifest = {"formatVersion": 1, "kind": "source-snapshot", "commit": commit,
                 "commitTimestamp": timestamp, "submodules": sorted(modules, key=lambda m: m["path"]),
