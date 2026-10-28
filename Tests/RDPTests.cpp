@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "Renderer.hpp"
 #include "Capture.hpp"
+#include "TriangleReference.hpp"
 #include "TriangleSpans.hpp"
 #include <cstdio>
 #include <cstdlib>
@@ -316,6 +317,31 @@ int main(int argc, char** argv) {
         degenerate.yh = 12; degenerate.ym = 12; degenerate.yl = 12;
         require(generateTriangleSpans(degenerate).empty(),
                 "Degenerate triangle produced spans");
+
+        std::vector<uint8_t> triangleMemory(0x4000, 0x5a);
+        std::string triangleError;
+        require(drawFlatTriangleReference(triangleMemory.data(), triangleMemory.size(),
+                                           0x1000, 16, 2, 0x7c01, filled,
+                                           0, 0, 8, 4, triangleError),
+                triangleError.c_str());
+        for (uint32_t y = 0; y < 4; ++y) {
+            for (uint32_t x = 0; x < 8; ++x) {
+                uint16_t pixel = 0;
+                require(aurum::memory::readHalfword(triangleMemory.data(),
+                                                    triangleMemory.size(),
+                                                    0x1000 + (y * 16 + x) * 2,
+                                                    pixel),
+                        "Read flat triangle reference pixel");
+                const uint16_t expected = (x >= 2 && x < 8) ? 0x7c01 : 0x5a5a;
+                require(pixel == expected, "Flat triangle pixel ownership");
+            }
+        }
+        const auto beforeTriangleReject = triangleMemory;
+        require(!drawFlatTriangleReference(triangleMemory.data(), triangleMemory.size(),
+                                            0x1000, 16, 3, 0x7c01, filled,
+                                            0, 0, 8, 4, triangleError) &&
+                triangleMemory == beforeTriangleReject,
+                "Invalid flat triangle target changed memory");
 
         std::mt19937 random(0x64);
         for (unsigned trial = 0; trial < 48; ++trial) {
