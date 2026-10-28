@@ -1,0 +1,28 @@
+name: Source archive
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  source-archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test offline source packaging
+        run: python3 -B -m unittest discover -s Tests -p 'test_source_archive.py' -v
+      - name: Check source snapshot reproducibility
+        run: |
+          python3 -B scripts/source_archive.py --output .build/source-a.tar.gz
+          python3 -B scripts/source_archive.py --output .build/source-b.tar.gz
+          cmp .build/source-a.tar.gz .build/source-b.tar.gz
