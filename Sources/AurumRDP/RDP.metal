@@ -4,6 +4,19 @@ using namespace metal;
 struct Fill { uint address, width, size, color, x0, y0, x1, y1; };
 struct Scanout { uint origin, stride, size, width, height, xScale, yScale, xOffset, yOffset, length; };
 struct CopyWord { uint word, high, low; };
+struct TriangleWord { uint word, high, low; };
+
+kernel void triangleFill(device uint* ram [[buffer(0)]],
+                         device const TriangleWord* plan [[buffer(1)]],
+                         uint index [[thread_position_in_grid]]) {
+    TriangleWord item = plan[index];
+    uint value = ram[item.word];
+    if (item.high != 0xffffffffu)
+        value = (value & 0x0000ffffu) | (item.high << 16);
+    if (item.low != 0xffffffffu)
+        value = (value & 0xffff0000u) | item.low;
+    ram[item.word] = value;
+}
 
 kernel void textureCopy(device uint* ram [[buffer(0)]], device const ushort* tmem [[buffer(1)]],
                         device const CopyWord* plan [[buffer(2)]],

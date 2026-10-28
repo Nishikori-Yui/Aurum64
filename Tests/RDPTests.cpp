@@ -342,6 +342,13 @@ int main(int argc, char** argv) {
                                             0, 0, 8, 4, triangleError) &&
                 triangleMemory == beforeTriangleReject,
                 "Invalid flat triangle target changed memory");
+        std::vector<uint8_t> metalTriangleMemory(0x4000, 0x5a);
+        require(renderer.flatTriangle(metalTriangleMemory.data(),
+                                       metalTriangleMemory.size(), 0x1000, 16, 2,
+                                       0x7c01, filled, 0, 0, 8, 4, error),
+                error.c_str());
+        require(metalTriangleMemory == triangleMemory,
+                "Metal flat triangle differs from CPU reference");
 
         std::mt19937 random(0x64);
         for (unsigned trial = 0; trial < 48; ++trial) {
