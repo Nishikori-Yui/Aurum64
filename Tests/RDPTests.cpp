@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "Renderer.hpp"
 #include "Capture.hpp"
+#include "TriangleSpans.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -267,6 +268,33 @@ int main(int argc, char** argv) {
         require(decoder.unsupported == 1 && decoder.firstUnsupported().opcode == 0x0f,
                 "Rejected triangle was not reported as unsupported");
         decoder.triangle = nullptr;
+
+        Triangle flat;
+        flat.yh = 0; flat.ym = 8; flat.yl = 16;
+        flat.xh = 2 << 16; flat.xm = 2 << 16; flat.xl = 6 << 16;
+        flat.dxhdy = 0; flat.dxmdy = 0; flat.dxldy = 0;
+        const auto flatSpans = generateTriangleSpans(flat);
+        require(flatSpans.size() == 4 && flatSpans[0].y == 0 &&
+                flatSpans[0].left == 2 && flatSpans[0].right == 2 &&
+                !flatSpans[0].valid && flatSpans[2].left == 6 &&
+                !flatSpans[2].valid,
+                "Flat triangle span boundaries");
+
+        Triangle stepped;
+        stepped.yh = -4; stepped.ym = 4; stepped.yl = 12;
+        stepped.xh = 0; stepped.xm = 4 << 16; stepped.xl = 8 << 16;
+        stepped.dxhdy = 4 << 16; stepped.dxmdy = 2 << 16;
+        stepped.dxldy = 1 << 16;
+        const auto steppedSpans = generateTriangleSpans(stepped);
+        require(steppedSpans.size() == 4 && steppedSpans.front().y == -1 &&
+                steppedSpans.back().y == 2 &&
+                steppedSpans[1].left <= steppedSpans[2].left,
+                "Negative and segmented triangle spans");
+
+        Triangle degenerate;
+        degenerate.yh = 12; degenerate.ym = 12; degenerate.yl = 12;
+        require(generateTriangleSpans(degenerate).empty(),
+                "Degenerate triangle produced spans");
 
         std::mt19937 random(0x64);
         for (unsigned trial = 0; trial < 48; ++trial) {
