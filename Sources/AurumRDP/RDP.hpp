@@ -45,6 +45,12 @@ struct Triangle {
     bool shade = false, texture = false, z = false;
     int32_t yl = 0, ym = 0, yh = 0;
     int32_t xl = 0, dxldy = 0, xh = 0, dxhdy = 0, xm = 0, dxmdy = 0;
+    uint32_t cycleType = 0;
+    uint32_t fbFormat = 0, fbSize = 0, fbWidth = 0, fbAddress = 0;
+    uint32_t clipXh = 0, clipYh = 0, clipXl = 0, clipYl = 0;
+    uint32_t scissorMode = 0, otherModesHi = 0, otherModesLo = 0;
+    uint32_t primitiveColor = 0;
+    bool primitiveColorValid = false;
     std::array<uint32_t, 44> words{};
 };
 struct UnsupportedContext {
@@ -123,6 +129,8 @@ private:
     uint32_t address = 0, width = 0, size = 0, format = 0, color = 0, cycle = 0;
     uint32_t imageReadEn = 0, zUpdateEn = 0, zCompareEn = 0;
     uint32_t tiFormat = 0, tiSize = 0, tiWidth = 0, tiAddress = 0, zbAddress = 0;
+    uint32_t primitiveColor = 0;
+    bool primitiveColorValid = false;
     std::array<uint32_t, 32> tiles{};
     std::array<uint32_t, 32> tileSizes_{};
     std::array<uint32_t, 8> tileModes_{};

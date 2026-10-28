@@ -85,6 +85,8 @@ void Decoder::reset() {
     address = width = size = format = color = cycle = 0;
     imageReadEn = zUpdateEn = zCompareEn = 0;
     tiFormat = tiSize = tiWidth = tiAddress = zbAddress = 0;
+    primitiveColor = 0;
+    primitiveColorValid = false;
     tiles.fill(0);
     tileSizes_.fill(0);
     tileModes_.fill(0);
@@ -162,6 +164,10 @@ void Decoder::execute(std::span<const uint32_t> w) {
         imageReadEn = (b >> 6) & 1;
         zUpdateEn = (b >> 5) & 1;
         zCompareEn = (b >> 4) & 1;
+        break;
+    case 0x3a:
+        primitiveColor = b;
+        primitiveColorValid = true;
         break;
     case 0x32: {
         const uint32_t tile = (b >> 24) & 7;
@@ -243,7 +249,21 @@ void Decoder::execute(std::span<const uint32_t> w) {
     }
     case 0x08: case 0x09: case 0x0a: case 0x0b:
     case 0x0c: case 0x0d: case 0x0e: case 0x0f: {
-        const Triangle triangle = decodeTriangle(w);
+        Triangle triangle = decodeTriangle(w);
+        triangle.cycleType = cycle;
+        triangle.fbFormat = format;
+        triangle.fbSize = size;
+        triangle.fbWidth = width;
+        triangle.fbAddress = address;
+        triangle.clipXh = sx0;
+        triangle.clipYh = sy0;
+        triangle.clipXl = sx1;
+        triangle.clipYl = sy1;
+        triangle.scissorMode = scissorMode;
+        triangle.otherModesHi = otherModesHi;
+        triangle.otherModesLo = otherModesLo;
+        triangle.primitiveColor = primitiveColor;
+        triangle.primitiveColorValid = primitiveColorValid;
         if (!this->triangle || !this->triangle(triangle)) markUnsupported(w);
         break;
     }

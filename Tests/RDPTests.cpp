@@ -270,6 +270,34 @@ int main(int argc, char** argv) {
                 "Rejected triangle was not reported as unsupported");
         decoder.triangle = nullptr;
 
+        decoder.reset();
+        decoder.beginSubmission();
+        Triangle capturedTriangle;
+        decoder.triangle = [&](const Triangle& triangle) {
+            capturedTriangle = triangle;
+            return true;
+        };
+        const uint32_t triangleState[] = {
+            0xff100007, 0x1000,
+            0xed000000, (32u << 12) | 32u,
+            0xef300000, 0,
+            0xfa000000, 0x804020ff
+        };
+        decoder.push(triangleState);
+        std::array<uint32_t, 44> stateTriangle{};
+        stateTriangle[0] = 0x0f000000 | 12u;
+        stateTriangle[1] = (8u << 16) | 20u;
+        decoder.push(stateTriangle);
+        require(capturedTriangle.fbFormat == 0 && capturedTriangle.fbSize == 2 &&
+                capturedTriangle.fbWidth == 8 && capturedTriangle.fbAddress == 0x1000 &&
+                capturedTriangle.clipXh == 0 && capturedTriangle.clipYh == 0 &&
+                capturedTriangle.clipXl == 32 && capturedTriangle.clipYl == 32 &&
+                capturedTriangle.cycleType == 3 &&
+                capturedTriangle.primitiveColorValid &&
+                capturedTriangle.primitiveColor == 0x804020ff,
+                "Triangle issue-time state snapshot");
+        decoder.triangle = nullptr;
+
         Triangle flat;
         flat.yh = 0; flat.ym = 8; flat.yl = 16;
         flat.xh = 2 << 16; flat.xm = 2 << 16; flat.xl = 6 << 16;
