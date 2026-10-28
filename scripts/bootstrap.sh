@@ -7,5 +7,8 @@ for tool in cmake ninja pkg-config python3; do
     command -v "$tool" >/dev/null || { echo "Install $tool (Homebrew is supported)." >&2; exit 1; }
 done
 pkg-config --exists sdl2 libpng || { echo 'Install sdl2 and libpng with Homebrew.' >&2; exit 1; }
-git submodule update --init --recursive
+if [[ -e .git ]]; then
+    git submodule update --init --recursive
+fi
+python3 scripts/source_inputs.py verify
 echo 'Dependencies initialized. Run scripts/build.sh.'

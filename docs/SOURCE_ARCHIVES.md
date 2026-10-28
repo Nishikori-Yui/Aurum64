@@ -6,10 +6,9 @@ Metal, Homebrew libraries, a running emulator, or network access.
 
 This is a development source snapshot, **not a release-ready corresponding
 source package**. Homebrew dependency sources are still unpinned and absent.
-The existing build scripts also depend on Git metadata, which this archive
-deliberately does not include. Building directly from an extracted snapshot
-without Git needs separate build-script work. See [dependency provenance](DEPENDENCIES.md)
-for licensing and release requirements.
+The build scripts accept verified snapshots without repository metadata, but
+still require the macOS toolchain and installed build libraries. See
+[dependency provenance](DEPENDENCIES.md) for licensing and release requirements.
 
 ## Generate locally
 
@@ -76,10 +75,43 @@ reference and its upstream license. Its distribution restrictions still apply;
 this tool does not turn that reference into a production app component or grant
 permission to redistribute it commercially.
 
+## Build an extracted snapshot
+
+Extract into a new directory. From its `Aurum64-<commit>-source` directory, run:
+
+```sh
+python3 -B scripts/source_inputs.py verify
+scripts/bootstrap.sh
+JOBS=2 scripts/build.sh
+```
+
+The app still requires Apple Silicon, macOS 26+, Xcode/Metal, cmake, ninja,
+pkg-config, SDL2 and libpng as documented in the README. Git remains a build
+tool for applying the core patch, but no `.git` directory, clone or fetch is
+needed. Bootstrap skips submodule initialization for a snapshot.
+
+`source_inputs.py` verifies every listed file's SHA-256, Git blob ID and
+executable mode. Missing files, unlisted source files, unsafe symlinks and bad
+pins fail before compilation. Generated `.build`, `build`, `dist`, Python
+cache directories and Finder metadata are allowed, so the check also works
+after a build. Checksums detect changes; an unsigned manifest is not proof of
+authenticity. Obtain snapshots and their hashes from a trusted source.
+
+Keep snapshot inputs unchanged. To edit sources, use a Git checkout instead;
+do not remove or rewrite the manifest to bypass a mismatch. Git builds require
+each upstream checkout to match its committed gitlink with no tracked changes
+or untracked files. Root application edits remain supported and are recorded
+as `checkoutModified` in the packaged build provenance.
+
+The core patch is applied only to a generated copy, whether inputs come from
+Git or a snapshot. A failed patch keeps the last usable generated copy. RSP
+cache keys and the app's `BuildManifest.json` use the same verified source pins;
+snapshot builds also record the source manifest's SHA-256.
+
 ## Verification
 
 ```sh
-python3 -B -m unittest discover -s Tests -p 'test_source_archive.py' -v
+python3 -B -m unittest discover -s Tests -p 'test_source*.py' -v
 ```
 
 Tests create disposable local Git repositories with synthetic data. They cover
@@ -87,10 +119,14 @@ dirty checkouts and indexes, advanced submodule checkouts, recursive gitlinks,
 linked worktrees, missing dependencies, hashes, file modes, symlinks, privacy
 guards, macOS path collisions, extraction round trips, failure cleanup and
 concurrent output protection. No existing checkout, build directory, ROM, app
-process or GPU is used.
+process or GPU is used. Build-input tests also cover snapshot checksums,
+unlisted files, version/mode changes, provenance, and transactional core patch
+preparation from both Git and extracted sources.
 
 The separate `Source archive` workflow runs these tests and compares two real
 repository exports on Linux using Python 3.9, 3.12 and 3.14. Each version checks
 its own repeated output; the workflow does not require identical compressed
 bytes across Python/zlib versions. It does not alter the macOS build workflow,
-upload archives or create a release.
+upload archives or create a release. It also extracts a real snapshot, verifies
+its inputs and applies the real upstream core patch without repository metadata;
+this Linux job does not claim to compile or run the macOS app.

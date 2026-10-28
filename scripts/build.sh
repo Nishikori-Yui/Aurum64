@@ -11,7 +11,8 @@ make -C .build/sources/mupen64plus-core/projects/unix -j"$JOBS" OSD=0 NO_ASM=1 K
     TARGET_ARCH="-mmacosx-version-min=$MACOSX_DEPLOYMENT_TARGET" \
     OBJDIR="$PWD/.build/upstream/core-$CORE_VARIANT" TARGET="$PWD/.build/upstream/core-$CORE_VARIANT.dylib" all
 cp ".build/upstream/core-$CORE_VARIANT.dylib" .build/libmupen64plus.dylib
-RSP_VARIANT=$(printf '%s' "$(git -C third_party/mupen64plus-rsp-cxd4 rev-parse HEAD):$MACOSX_DEPLOYMENT_TARGET:O2" | shasum -a 256 | cut -c1-12)
+RSP_PIN=$(python3 scripts/source_inputs.py pin mupen64plus-rsp-cxd4)
+RSP_VARIANT=$(printf '%s' "$RSP_PIN:$MACOSX_DEPLOYMENT_TARGET:O2" | shasum -a 256 | cut -c1-12)
 make -C third_party/mupen64plus-rsp-cxd4/projects/unix -j"$JOBS" OPTFLAGS=-O2 \
     OBJDIR="$PWD/.build/upstream/rsp-$RSP_VARIANT" TARGET="$PWD/.build/upstream/rsp-$RSP_VARIANT.dylib" all
 cp ".build/upstream/rsp-$RSP_VARIANT.dylib" .build/mupen64plus-rsp-cxd4.dylib

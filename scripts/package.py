@@ -9,7 +9,11 @@ import plistlib
 import shutil
 import subprocess
 
+from source_inputs import SourceInputs
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+SOURCE_INPUTS = SourceInputs(ROOT)
+SOURCE_INPUTS.verify()
 APP = ROOT / "dist/Aurum64.app"
 STAGING = ROOT / ".build/package/Aurum64.app"
 FINAL_APP = APP
@@ -121,9 +125,10 @@ for name, source in copied.items():
                      "sourceSHA256": hashlib.sha256(source.read_bytes()).hexdigest()})
     run("codesign", "--force", "--sign", "-", str(LIBS / name))
 
-pins = {name: run("git", "-C", str(ROOT / "third_party" / name), "rev-parse", "HEAD")
+pins = {name: SOURCE_INPUTS.pin(name)
         for name in ["mupen64plus-core", "mupen64plus-rsp-cxd4"]}
 (RES / "BuildManifest.json").write_text(json.dumps({"minimumMacOS": minimum, "submodules": pins, "libraries": manifest,
+    "source": SOURCE_INPUTS.provenance(),
     "corePatchSHA256": hashlib.sha256((ROOT / "patches/mupen64plus-core/0001-interpreter-host-poll.patch").read_bytes()).hexdigest()}, indent=2) + "\n")
 plist = {"CFBundleExecutable": "Aurum64", "CFBundleIdentifier": "org.aurum64.Aurum64",
          "CFBundleName": "Aurum64", "CFBundlePackageType": "APPL", "CFBundleShortVersionString": "0.1.0",

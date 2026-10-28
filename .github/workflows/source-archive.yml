@@ -23,9 +23,17 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Test offline source packaging
-        run: python3 -B -m unittest discover -s Tests -p 'test_source_archive.py' -v
+        run: python3 -B -m unittest discover -s Tests -p 'test_source*.py' -v
       - name: Check source snapshot reproducibility
         run: |
           python3 -B scripts/source_archive.py --output .build/source-a.tar.gz
           python3 -B scripts/source_archive.py --output .build/source-b.tar.gz
           cmp .build/source-a.tar.gz .build/source-b.tar.gz
+      - name: Verify extracted inputs and prepare core without Git metadata
+        run: |
+          mkdir .build/extracted
+          tar -xzf .build/source-a.tar.gz -C .build/extracted
+          cd .build/extracted/Aurum64-*-source
+          test ! -e .git
+          python3 -B scripts/source_inputs.py verify
+          python3 -B scripts/prepare_core.py
