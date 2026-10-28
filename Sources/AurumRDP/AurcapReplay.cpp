@@ -2,6 +2,7 @@
 #include "Capture.hpp"
 #include "MemoryBus.hpp"
 #include "RDP.hpp"
+#include "TriangleMode.hpp"
 #include "TextureUpload.hpp"
 #ifdef AURUM_METAL_REPLAY
 #include "Renderer.hpp"
@@ -254,6 +255,15 @@ int main(int argc, char** argv) {
         decoder.textureRect = [&](const aurum::rdp::TextureRect& rect) {
             return renderer.textureCopy(output.rdram.data(), output.rdram.size(), rect,
                                         output.textures.store(), error);
+        };
+        decoder.triangle = [&](const aurum::rdp::Triangle& triangle) {
+            if (!aurum::rdp::isFlatPrimitiveTriangle(triangle)) return false;
+            return renderer.flatTriangle(
+                output.rdram.data(), output.rdram.size(), triangle.fbAddress,
+                triangle.fbWidth, triangle.fbSize,
+                aurum::rdp::primitiveColor16(triangle.primitiveColor), triangle,
+                int32_t(triangle.clipXh >> 2), int32_t(triangle.clipYh >> 2),
+                int32_t(triangle.clipXl >> 2), int32_t(triangle.clipYl >> 2), error);
         };
 #else
         decoder.fill = [&](const aurum::rdp::Fill& fill) {

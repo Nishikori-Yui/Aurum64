@@ -49,6 +49,8 @@ struct Triangle {
     uint32_t fbFormat = 0, fbSize = 0, fbWidth = 0, fbAddress = 0;
     uint32_t clipXh = 0, clipYh = 0, clipXl = 0, clipYl = 0;
     uint32_t scissorMode = 0, otherModesHi = 0, otherModesLo = 0;
+    uint32_t combineHi = 0, combineLo = 0;
+    bool combineValid = false;
     uint32_t primitiveColor = 0;
     bool primitiveColorValid = false;
     std::array<uint32_t, 44> words{};
@@ -131,6 +133,8 @@ private:
     uint32_t tiFormat = 0, tiSize = 0, tiWidth = 0, tiAddress = 0, zbAddress = 0;
     uint32_t primitiveColor = 0;
     bool primitiveColorValid = false;
+    uint32_t combineHi = 0, combineLo = 0;
+    bool combineValid = false;
     std::array<uint32_t, 32> tiles{};
     std::array<uint32_t, 32> tileSizes_{};
     std::array<uint32_t, 8> tileModes_{};

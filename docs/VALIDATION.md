@@ -417,6 +417,27 @@ The failed modes are retained as negative differential tests, not dropped.
 
 The IA8/I8 qword lane/bank mapping remains unresolved outside this envelope; do
 not expand it until an independently explained mapping passes the matrix.
-Point-cycle rendering, filtering, LOD, native 4-bit upload, YUV, triangles,
-Combiner/Blender/Depth/Coverage and accurate VI remain unfinished. No
-commercial game is claimed playable from this node.
+Point-cycle rendering, filtering, LOD, native 4-bit upload, YUV, general
+triangle attributes, Combiner/Blender/Depth/Coverage and accurate VI remain
+unfinished. No commercial game is claimed playable from this node.
+
+# Flat primitive triangles - 2026-10-28 (strict production gate)
+
+The Metal flat-triangle word renderer is now reachable from the RDP decoder's
+production Video callback and Metal capture replay. Triangle issue-time state
+includes SetCombine and SetPrimColor. Dispatch accepts only a single exact
+one-cycle RGBA16 flat primitive-color mode with no shade, texture or Z payload,
+the supported scissor mode, and an exact combiner/mode tuple. All other triangle
+configurations remain Unsupported and do not enter the renderer.
+
+| Check | Result |
+| --- | --- |
+| State snapshot | SetCombine words, SetPrimColor validity/value, framebuffer, scissor and OtherModes are preserved at triangle issue time |
+| Mode gate | The supported flat primitive mode is accepted; a textured variant is rejected |
+| Decoder-to-Metal route | A generated flat triangle reaches the Metal renderer and matches the CPU framebuffer oracle byte-for-byte |
+| Build and tests | `scripts/build.sh` passed; Metal API Validation CTest passed 12/12; fresh-output `scripts/test.py` passed |
+
+This is one narrow fill mode, not general triangle support. Coverage accuracy,
+shade/texture/Z interpolation, additional combiner tuples, blender/depth and
+game-scene compatibility remain open; no commercial game claim follows from
+these synthetic tests.

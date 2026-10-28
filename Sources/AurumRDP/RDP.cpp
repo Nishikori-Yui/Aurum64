@@ -87,6 +87,8 @@ void Decoder::reset() {
     tiFormat = tiSize = tiWidth = tiAddress = zbAddress = 0;
     primitiveColor = 0;
     primitiveColorValid = false;
+    combineHi = combineLo = 0;
+    combineValid = false;
     tiles.fill(0);
     tileSizes_.fill(0);
     tileModes_.fill(0);
@@ -168,6 +170,11 @@ void Decoder::execute(std::span<const uint32_t> w) {
     case 0x3a:
         primitiveColor = b;
         primitiveColorValid = true;
+        break;
+    case 0x3c:
+        combineHi = a & 0x00ffffffu;
+        combineLo = b;
+        combineValid = true;
         break;
     case 0x32: {
         const uint32_t tile = (b >> 24) & 7;
@@ -262,6 +269,9 @@ void Decoder::execute(std::span<const uint32_t> w) {
         triangle.scissorMode = scissorMode;
         triangle.otherModesHi = otherModesHi;
         triangle.otherModesLo = otherModesLo;
+        triangle.combineHi = combineHi;
+        triangle.combineLo = combineLo;
+        triangle.combineValid = combineValid;
         triangle.primitiveColor = primitiveColor;
         triangle.primitiveColorValid = primitiveColorValid;
         if (!this->triangle || !this->triangle(triangle)) markUnsupported(w);

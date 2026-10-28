@@ -3,6 +3,7 @@
 #include "Capture.hpp"
 #include "DpcDispatch.hpp"
 #include "Renderer.hpp"
+#include "TriangleMode.hpp"
 #include "TextureUpload.hpp"
 #include <cstring>
 #include <fstream>
@@ -92,6 +93,7 @@ uint64_t environmentLimit(const char* name) {
     return end && !*end ? uint64_t(value) : 0;
 }
 size_t memorySize() { return info.RDRAM_SIZE ? *info.RDRAM_SIZE : 8 * 1024 * 1024; }
+
 }
 extern "C" {
 EXPORT int CALL InitiateGFX(GFX_INFO value) { info = value; return info.version >= 2; }
@@ -131,6 +133,15 @@ EXPORT int CALL RomOpen() {
     decoder.textureRect = [](const aurum::rdp::TextureRect& rect) {
         std::string error;
         return renderer->textureCopy(info.RDRAM, memorySize(), rect, textures.store(), error);
+    };
+    decoder.triangle = [](const aurum::rdp::Triangle& triangle) {
+        if (!aurum::rdp::isFlatPrimitiveTriangle(triangle)) return false;
+        std::string error;
+        return renderer->flatTriangle(
+            info.RDRAM, memorySize(), triangle.fbAddress, triangle.fbWidth,
+            triangle.fbSize, aurum::rdp::primitiveColor16(triangle.primitiveColor), triangle,
+            int32_t(triangle.clipXh >> 2), int32_t(triangle.clipYh >> 2),
+            int32_t(triangle.clipXl >> 2), int32_t(triangle.clipYl >> 2), error);
     };
     decoder.sync = [] { *info.MI_INTR_REG |= 0x20; info.CheckInterrupts(); };
     if (const char* path = std::getenv("AURUM_RDP_TRACE")) trace.open(path, std::ios::binary | std::ios::trunc);

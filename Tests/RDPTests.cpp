@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "Renderer.hpp"
 #include "Capture.hpp"
+#include "TriangleMode.hpp"
 #include "TriangleReference.hpp"
 #include "TriangleSpans.hpp"
 #include <cstdio>
@@ -281,6 +282,9 @@ int main(int argc, char** argv) {
             0xff100007, 0x1000,
             0xed000000, (32u << 12) | 32u,
             0xef300000, 0,
+            0xfc000000 | (3u << 20) | (6u << 15) | (3u << 12) | (6u << 9),
+            (8u << 28) | (8u << 24) | (6u << 18) | (7u << 15) |
+                (7u << 12) | (7u << 9) | (7u << 6) | (7u << 3) | 7u,
             0xfa000000, 0x804020ff
         };
         decoder.push(triangleState);
@@ -293,10 +297,63 @@ int main(int argc, char** argv) {
                 capturedTriangle.clipXh == 0 && capturedTriangle.clipYh == 0 &&
                 capturedTriangle.clipXl == 32 && capturedTriangle.clipYl == 32 &&
                 capturedTriangle.cycleType == 3 &&
+                capturedTriangle.combineValid &&
+                capturedTriangle.combineHi == ((3u << 20) | (6u << 15) |
+                    (3u << 12) | (6u << 9)) &&
+                capturedTriangle.combineLo ==
+                    ((8u << 28) | (8u << 24) | (6u << 18) | (7u << 15) |
+                     (7u << 12) | (7u << 9) | (7u << 6) | (7u << 3) | 7u) &&
                 capturedTriangle.primitiveColorValid &&
                 capturedTriangle.primitiveColor == 0x804020ff,
                 "Triangle issue-time state snapshot");
+        Triangle flatMode = capturedTriangle;
+        flatMode.shade = false;
+        flatMode.texture = false;
+        flatMode.z = false;
+        flatMode.cycleType = 1;
+        flatMode.otherModesHi = 0x100000;
+        flatMode.otherModesLo = 0;
+        require(aurum::rdp::isFlatPrimitiveTriangle(flatMode),
+                "Flat primitive triangle mode gate");
+        flatMode.texture = true;
+        require(!aurum::rdp::isFlatPrimitiveTriangle(flatMode),
+                "Textured triangle passed flat mode gate");
         decoder.triangle = nullptr;
+
+        std::vector<uint8_t> routedTriangleMemory(0x4000, 0x5a);
+        std::vector<uint8_t> routedTriangleExpected = routedTriangleMemory;
+        Decoder routedTriangleDecoder;
+        unsigned routedTriangles = 0;
+        routedTriangleDecoder.triangle = [&](const Triangle& triangle) {
+            if (!aurum::rdp::isFlatPrimitiveTriangle(triangle)) return false;
+            ++routedTriangles;
+            return renderer.flatTriangle(
+                       routedTriangleMemory.data(), routedTriangleMemory.size(),
+                       triangle.fbAddress, triangle.fbWidth, triangle.fbSize,
+                       aurum::rdp::primitiveColor16(triangle.primitiveColor), triangle,
+                       triangle.clipXh >> 2, triangle.clipYh >> 2,
+                       triangle.clipXl >> 2, triangle.clipYl >> 2, error) &&
+                   drawFlatTriangleReference(
+                       routedTriangleExpected.data(), routedTriangleExpected.size(),
+                       triangle.fbAddress, triangle.fbWidth, triangle.fbSize,
+                       aurum::rdp::primitiveColor16(triangle.primitiveColor), triangle,
+                       triangle.clipXh >> 2, triangle.clipYh >> 2,
+                       triangle.clipXl >> 2, triangle.clipYl >> 2, error);
+        };
+        const uint32_t routedTriangleCommands[] = {
+            0xff100007, 0x1000,
+            0xed000000, (32u << 12) | 32u,
+            0xef100000, 0,
+            0xfc000000 | aurum::rdp::kFlatPrimitiveCombineHi,
+            aurum::rdp::kFlatPrimitiveCombineLo,
+            0xfa000000, 0x804020ff,
+            0x08000000 | 16u, (8u << 16),
+            2u << 16, 0, 8u << 16, 0, 2u << 16, 0
+        };
+        routedTriangleDecoder.push(routedTriangleCommands);
+        require(routedTriangles == 1 && routedTriangleDecoder.unsupported == 0 &&
+                routedTriangleMemory == routedTriangleExpected,
+                "Decoded flat primitive triangle did not match the CPU oracle");
 
         Triangle flat;
         flat.yh = 0; flat.ym = 8; flat.yl = 16;

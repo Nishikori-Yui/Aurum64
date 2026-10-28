@@ -52,6 +52,14 @@ subsequent uploads, which allows a rendered framebuffer to become a texture
 source. Point-cycle indexed sampling, other TLUT types, other
 indexed formats and filtering remain unsupported.
 
+Triangle commands snapshot framebuffer, scissor, OtherModes, combiner and
+primitive-color state at issue time. The production callback currently accepts
+only one exact flat primitive-color configuration: one-cycle RGBA16, no shade,
+texture or Z attributes, scissor mode 0, and an exact combiner/mode tuple. It
+uses the CPU span planner and a Metal word-owned write kernel. Other triangle
+modes fail closed as Unsupported; attribute interpolation, general combiner,
+blender, depth and coverage behavior are not implemented.
+
 The isolated point-fetch helper also decodes IA8, IA16 and I8 from
 reference-verified TMEM layouts. This is a sampler/test capability only: those
 formats are not yet connected to Metal texture rectangles or the production
