@@ -11,6 +11,7 @@ struct TriangleSpan {
     int32_t y = 0;
     int32_t left = 0;
     int32_t right = 0;
+    uint8_t coverage = 0;
     bool valid = false;
 };
 
@@ -32,12 +33,20 @@ inline std::vector<TriangleSpan> generateTriangleSpans(const Triangle& triangle)
     const int32_t lastRow = floorDiv(triangle.yl + 3, 4);
     if (lastRow <= firstRow || triangle.yh >= triangle.yl) return spans;
 
-    int32_t major = triangle.xh;
-    int32_t minor = triangle.xm;
     int32_t majorStep = triangle.dxhdy >> 2;
     int32_t minorStep = triangle.dxmdy >> 2;
     const int32_t startSubpixel = firstRow * 4;
     const int32_t endSubpixel = lastRow * 4;
+    int32_t major = triangle.xh +
+        (startSubpixel - triangle.yh) * majorStep;
+    int32_t minor = triangle.xm;
+    if (startSubpixel >= triangle.ym) {
+        minorStep = triangle.dxldy >> 2;
+        minor = triangle.xl +
+            (startSubpixel - triangle.ym) * minorStep;
+    } else {
+        minor += (startSubpixel - triangle.yh) * minorStep;
+    }
     for (int32_t subpixelY = startSubpixel; subpixelY < endSubpixel; ++subpixelY) {
         if (subpixelY == triangle.ym) {
             minor = triangle.xl;
@@ -45,11 +54,13 @@ inline std::vector<TriangleSpan> generateTriangleSpans(const Triangle& triangle)
         }
         const int32_t row = floorDiv(subpixelY, 4);
         if (spans.empty() || spans.back().y != row)
-            spans.push_back({row, INT32_MIN, INT32_MAX, true});
+            spans.push_back({row, INT32_MIN, INT32_MAX, 0, true});
         auto& span = spans.back();
         span.left = std::max(span.left, edgePixel(minor));
         span.right = std::min(span.right, edgePixel(major));
-        if (span.left >= span.right) span.valid = false;
+        if (subpixelY >= triangle.yh && subpixelY < triangle.yl)
+            span.coverage |= uint8_t(1u << (subpixelY & 3));
+        if (span.left >= span.right || span.coverage == 0) span.valid = false;
         major += majorStep;
         minor += minorStep;
     }
