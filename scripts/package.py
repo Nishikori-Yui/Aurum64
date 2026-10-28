@@ -10,6 +10,8 @@ import shutil
 import subprocess
 
 from source_inputs import SourceInputs
+from bundle_audit import (ALLOWED_LIBRARIES, LOCAL_LIBRARIES, audit_bundle,
+                          parse_filetype, parse_load_commands, version)
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SOURCE_INPUTS = SourceInputs(ROOT)
@@ -34,12 +36,14 @@ def copy(source, destination):
     destination.chmod(destination.stat().st_mode | 0o200)
 
 def dependencies(path):
-    return [line.strip().split(" (compatibility")[0] for line in run("otool", "-L", str(path)).splitlines()[1:]]
+    return parse_load_commands(run("otool", "-l", str(path))).dependencies
 
 copied = {}
 def bundle(source):
     source = pathlib.Path(source)
     name = source.name
+    if name not in ALLOWED_LIBRARIES:
+        raise RuntimeError(f"Library is not allowed in the application bundle: {name}")
     if name in copied:
         if source.resolve() != copied[name].resolve():
             raise RuntimeError(f"Dependency filename collision: {source}")
@@ -49,10 +53,10 @@ def bundle(source):
     copied[name] = source
     destination = LIBS / name
     copy(source, destination)
-    run("install_name_tool", "-id", f"@rpath/{name}", str(destination))
-    # The packaged ID replaces an upstream build-path ID; it is not a dependency.
-    source_dependencies = dependencies(source)
-    for dependency in source_dependencies[1:]:
+    if parse_filetype(run("otool", "-hv", str(source))) == "DYLIB":
+        run("install_name_tool", "-id", f"@rpath/{name}", str(destination))
+    # MH_BUNDLE plugins have no ID; never drop their first actual dependency.
+    for dependency in dependencies(source):
         if dependency.startswith(("/System/", "/usr/lib/")):
             continue
         if dependency in [str(source), f"@rpath/{name}"]:
@@ -66,9 +70,9 @@ def bundle(source):
         bundle(candidate)
         run("install_name_tool", "-change", dependency, f"@loader_path/{candidate.name}", str(destination))
 
-for library in [ROOT / ".build/libmupen64plus.dylib", ROOT / ".build/mupen64plus-rsp-cxd4.dylib",
-                *sorted((ROOT / ".build/native").glob("libaurum-*.dylib"))]:
-    bundle(library)
+for name in LOCAL_LIBRARIES:
+    directory = ".build/native" if name.startswith("libaurum-") else ".build"
+    bundle(ROOT / directory / name)
 
 # SDL2-compat loads SDL3 dynamically; otool alone cannot discover it.
 if any("sdl2-compat" in str(path.resolve()) for path in copied.values()):
@@ -103,15 +107,23 @@ for name, source in license_files.items():
     copy(source, RES / "Licenses" / name)
 
 minimum = os.environ.get("MACOSX_DEPLOYMENT_TARGET", "26.0")
-def version(value):
-    return tuple(int(i) for i in value.split("."))
+def source_label(source):
+    real = source.resolve()
+    if real.is_relative_to(ROOT):
+        return "repository:" + real.relative_to(ROOT).as_posix()
+    if "/Cellar/" in str(real):
+        return "homebrew:" + str(real).split("/Cellar/", 1)[1]
+    raise RuntimeError(f"Cannot identify dependency provenance: {source.name}")
+
 manifest = []
 for name, source in copied.items():
     commands = run("otool", "-l", str(LIBS / name)).splitlines()
     for index, line in enumerate(commands):
         if line.strip() == "cmd LC_RPATH":
             path = commands[index + 2].strip().split(" (offset")[0].removeprefix("path ")
-            if path.startswith("/"):
+            # Homebrew also uses relative paths that escape the app bundle.
+            # Local dylibs resolve beside their loader; other paths are removed.
+            if path != "@loader_path":
                 run("install_name_tool", "-delete_rpath", path, str(LIBS / name))
     output = run("vtool", "-show-build", str(LIBS / name))
     for line in output.splitlines():
@@ -121,14 +133,18 @@ for name, source in copied.items():
     for dependency in dependencies(LIBS / name):
         if not dependency.startswith(("@loader_path/", "@rpath/", "/System/", "/usr/lib/")):
             raise RuntimeError(f"Unbundled dependency in {name}: {dependency}")
-    manifest.append({"library": name, "source": str(source.resolve()),
-                     "sourceSHA256": hashlib.sha256(source.read_bytes()).hexdigest()})
     run("codesign", "--force", "--sign", "-", str(LIBS / name))
+    manifest.append({"library": name, "source": source_label(source),
+                     "sourceSHA256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                     "bundledSHA256": hashlib.sha256((LIBS / name).read_bytes()).hexdigest()})
 
 pins = {name: SOURCE_INPUTS.pin(name)
         for name in ["mupen64plus-core", "mupen64plus-rsp-cxd4"]}
-(RES / "BuildManifest.json").write_text(json.dumps({"minimumMacOS": minimum, "submodules": pins, "libraries": manifest,
+(RES / "BuildManifest.json").write_text(json.dumps({"formatVersion": 1, "minimumMacOS": minimum, "submodules": pins, "libraries": manifest,
     "source": SOURCE_INPUTS.provenance(),
+    "resources": [{"path": path.relative_to(RES).as_posix(),
+                   "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+                  for path in sorted(RES.rglob("*")) if path.is_file()],
     "corePatchSHA256": hashlib.sha256((ROOT / "patches/mupen64plus-core/0001-interpreter-host-poll.patch").read_bytes()).hexdigest()}, indent=2) + "\n")
 plist = {"CFBundleExecutable": "Aurum64", "CFBundleIdentifier": "org.aurum64.Aurum64",
          "CFBundleName": "Aurum64", "CFBundlePackageType": "APPL", "CFBundleShortVersionString": "0.1.0",
@@ -140,6 +156,7 @@ with (CONTENTS / "Info.plist").open("wb") as file:
     plistlib.dump(plist, file)
 run("codesign", "--force", "--sign", "-", str(APP))
 run("codesign", "--verify", "--deep", "--strict", str(APP))
+audit_bundle(APP)
 FINAL_APP.parent.mkdir(parents=True, exist_ok=True)
 if FINAL_APP.exists():
     shutil.rmtree(FINAL_APP)
