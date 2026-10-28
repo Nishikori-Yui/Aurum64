@@ -420,3 +420,23 @@ not expand it until an independently explained mapping passes the matrix.
 Point-cycle rendering, filtering, LOD, native 4-bit upload, YUV, triangles,
 Combiner/Blender/Depth/Coverage and accurate VI remain unfinished. No
 commercial game is claimed playable from this node.
+
+# Authorized Super Mario 64 diagnostic run - 2026-10-28
+
+The user authorized a local run of a Super Mario 64 (USA) ROM to replace
+assumptions based only on generated test programs. The ROM stayed on the
+development machine; it was not uploaded, committed or included in a capture
+or release artifact.
+
+The packaged app loaded the ROM and continued through the CPU/RSP/AI/video
+plugin/Metal/VI path at about 59-62 VI/s. One observed session reached
+616,963 RDP commands and 340,876 Unsupported commands while the window
+reported an incomplete picture and the framebuffer remained unusable. This is
+evidence that the application reaches a real game's graphics stream; it is
+not a game compatibility or playability result.
+
+The existing versioned diagnostics ABI now also feeds the first Unsupported
+opcode, command, submission and VI numbers into the Swift HUD. This makes the
+next authorized run actionable without depending on a temporary trace
+environment. The first Unsupported UI was not manually rechecked after the
+machine became locked, so the next run must verify the displayed context.

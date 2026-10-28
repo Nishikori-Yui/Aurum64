@@ -11,6 +11,7 @@ final class EmulatorModel {
     var frames: UInt64 = 0
     var commands: UInt64 = 0
     var unsupported: UInt64 = 0
+    var firstUnsupported = ""
     var viRate = 0.0
     private var previousFrames: UInt64 = 0
     private var previousTime = Date()
@@ -47,6 +48,19 @@ final class EmulatorModel {
         aur_snapshot(&snapshot)
         state = snapshot.state; frames = snapshot.frames
         commands = snapshot.rdpCommands; unsupported = snapshot.unsupportedCommands
+        var diagnostics = AurDiagnostics()
+        if aur_diagnostics(&diagnostics, MemoryLayout<AurDiagnostics>.size) != 0,
+           diagnostics.firstUnsupportedValid != 0 {
+            firstUnsupported = String(
+                format: "First unsupported: opcode 0x%02X · command %llu · submission %llu · VI %llu",
+                diagnostics.firstUnsupportedOpcode,
+                diagnostics.firstUnsupportedCommand,
+                diagnostics.firstUnsupportedSubmission,
+                diagnostics.firstUnsupportedVI
+            )
+        } else {
+            firstUnsupported = ""
+        }
         message = withUnsafeBytes(of: snapshot.message) { bytes in
             String(decoding: bytes.prefix(while: { $0 != 0 }), as: UTF8.self)
         }

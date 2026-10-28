@@ -32,6 +32,13 @@ struct ContentView: View {
             if model.unsupported > 0 {
                 Text("This ROM uses graphics commands that are not implemented. The picture is incomplete.")
                     .font(.callout).foregroundStyle(.orange).padding(8)
+                if !model.firstUnsupported.isEmpty {
+                    Text(model.firstUnsupported)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .padding(.bottom, 8)
+                }
             }
             if showHUD {
                 HStack(spacing: 16) {
