@@ -420,4 +420,3 @@ not expand it until an independently explained mapping passes the matrix.
 Point-cycle rendering, filtering, LOD, native 4-bit upload, YUV, triangles,
 Combiner/Blender/Depth/Coverage and accurate VI remain unfinished. No
 commercial game is claimed playable from this node.
-
