@@ -10,7 +10,7 @@ namespace aurum::rdp {
 struct TriangleSpan {
     int32_t y = 0;
     int32_t left = 0;
-    int32_t right = 0;
+    int32_t right = 0; // Exclusive pixel boundary.
     uint8_t coverage = 0;
     bool valid = false;
 };
@@ -25,6 +25,11 @@ inline int32_t edgePixel(int32_t x) {
     return x >> 16;
 }
 
+inline int32_t addFixed(int32_t value, int32_t step, int32_t count) {
+    return static_cast<int32_t>(static_cast<int64_t>(value) +
+                                static_cast<int64_t>(step) * count);
+}
+
 // CPU-only first pass. It retains four subscanline edge samples per output
 // row so later coverage work can compare intermediate results before drawing.
 inline std::vector<TriangleSpan> generateTriangleSpans(const Triangle& triangle) {
@@ -37,15 +42,15 @@ inline std::vector<TriangleSpan> generateTriangleSpans(const Triangle& triangle)
     int32_t minorStep = triangle.dxmdy >> 2;
     const int32_t startSubpixel = firstRow * 4;
     const int32_t endSubpixel = lastRow * 4;
-    int32_t major = triangle.xh +
-        (startSubpixel - triangle.yh) * majorStep;
+    int32_t major = addFixed(triangle.xh, majorStep,
+                             startSubpixel - triangle.yh);
     int32_t minor = triangle.xm;
     if (startSubpixel >= triangle.ym) {
         minorStep = triangle.dxldy >> 2;
-        minor = triangle.xl +
-            (startSubpixel - triangle.ym) * minorStep;
+        minor = addFixed(triangle.xl, minorStep,
+                         startSubpixel - triangle.ym);
     } else {
-        minor += (startSubpixel - triangle.yh) * minorStep;
+        minor = addFixed(minor, minorStep, startSubpixel - triangle.yh);
     }
     for (int32_t subpixelY = startSubpixel; subpixelY < endSubpixel; ++subpixelY) {
         if (subpixelY == triangle.ym) {
@@ -61,9 +66,23 @@ inline std::vector<TriangleSpan> generateTriangleSpans(const Triangle& triangle)
         if (subpixelY >= triangle.yh && subpixelY < triangle.yl)
             span.coverage |= uint8_t(1u << (subpixelY & 3));
         if (span.left >= span.right || span.coverage == 0) span.valid = false;
-        major += majorStep;
-        minor += minorStep;
+        major = addFixed(major, majorStep, 1);
+        minor = addFixed(minor, minorStep, 1);
     }
     return spans;
+}
+
+inline void clipTriangleSpans(std::vector<TriangleSpan>& spans,
+                              int32_t clipXh, int32_t clipYh,
+                              int32_t clipXl, int32_t clipYl) {
+    for (auto& span : spans) {
+        if (span.y < clipYh || span.y >= clipYl) {
+            span.valid = false;
+            continue;
+        }
+        span.left = std::max(span.left, clipXh);
+        span.right = std::min(span.right, clipXl);
+        if (span.left >= span.right) span.valid = false;
+    }
 }
 } // namespace aurum::rdp

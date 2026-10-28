@@ -292,6 +292,25 @@ int main(int argc, char** argv) {
                 steppedSpans.back().y == 3 && steppedSpans.back().coverage == 1 &&
                 steppedSpans[1].left <= steppedSpans[2].left,
                 "Subpixel and segmented triangle spans");
+        Triangle filled;
+        filled.yh = 0; filled.ym = 8; filled.yl = 16;
+        filled.xh = 8 << 16; filled.xm = 2 << 16; filled.xl = 2 << 16;
+        auto clippedSpans = generateTriangleSpans(filled);
+        clipTriangleSpans(clippedSpans, 4, 1, 7, 3);
+        require(!clippedSpans[0].valid && clippedSpans[1].left == 4 &&
+                clippedSpans[1].right == 7 && clippedSpans[1].valid &&
+                !clippedSpans[3].valid,
+                "Triangle scissor clipping");
+
+        Triangle wide = stepped;
+        wide.xh = INT32_MIN + (8 << 16);
+        wide.xm = INT32_MAX - (8 << 16);
+        wide.xl = INT32_MAX - (8 << 16);
+        wide.dxhdy = INT32_MAX;
+        wide.dxmdy = INT32_MIN;
+        wide.dxldy = INT32_MIN;
+        const auto wideSpans = generateTriangleSpans(wide);
+        require(wideSpans.size() == 3, "Large fixed-point triangle range");
 
         Triangle degenerate;
         degenerate.yh = 12; degenerate.ym = 12; degenerate.yl = 12;
