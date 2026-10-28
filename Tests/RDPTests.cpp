@@ -218,6 +218,56 @@ int main(int argc, char** argv) {
                 "Missing TextureRectangle handler reported as unsupported");
         decoder.textureLoad = nullptr;
 
+        decoder.reset();
+        decoder.beginSubmission();
+        std::vector<Triangle> triangles;
+        decoder.triangle = [&](const Triangle& triangle) {
+            triangles.push_back(triangle);
+            return true;
+        };
+        for (uint32_t opcode = 0x08; opcode <= 0x0f; ++opcode) {
+            const size_t count = Decoder::wordCount(static_cast<uint8_t>(opcode));
+            std::vector<uint32_t> command(count, 0);
+            command[0] = opcode << 24 | 0x0123;
+            command[1] = (0x0234u << 16) | 0x0345u;
+            command[2] = 0x01234567;
+            command[3] = 0x23456789;
+            command[4] = 0x03456789;
+            command[5] = 0x3456789a;
+            command[6] = 0x0456789a;
+            command[7] = 0x456789ab;
+            decoder.push(command);
+            require(!decoder.hasPendingWords(), "Triangle command remained pending");
+        }
+        require(decoder.unsupported == 0 && triangles.size() == 8,
+                "Triangle commands were not dispatched");
+        for (const auto& triangle : triangles) {
+            require(triangle.opcode >= 0x08 && triangle.opcode <= 0x0f &&
+                    triangle.wordCount == Decoder::wordCount(
+                        static_cast<uint8_t>(triangle.opcode)) &&
+                    triangle.yl == 0x123 && triangle.ym == 0x234 &&
+                    triangle.yh == 0x345 && triangle.xl == 0x01234567 &&
+                    triangle.dxldy == static_cast<int32_t>(0xe3456789u) &&
+                    triangle.xh == 0x03456789 &&
+                    triangle.dxhdy == static_cast<int32_t>(0xf456789au) &&
+                    triangle.xm == 0x0456789a &&
+                    triangle.dxmdy == 0x056789ab,
+                    "Triangle edge fields were decoded incorrectly");
+            require(triangle.shade == ((triangle.opcode & 4) != 0) &&
+                    triangle.texture == ((triangle.opcode & 2) != 0) &&
+                    triangle.z == ((triangle.opcode & 1) != 0),
+                    "Triangle payload flags were decoded incorrectly");
+        }
+        decoder.triangle = [](const Triangle&) { return false; };
+        const uint32_t partialTriangle[44] = {0x0f000123};
+        decoder.push(std::span(partialTriangle, 43));
+        require(decoder.unsupported == 0 && decoder.hasPendingWords(),
+                "Partial triangle was consumed too early");
+        decoder.push(std::span(partialTriangle + 43, 1));
+        require(decoder.unsupported == 1 && decoder.firstUnsupported().opcode == 0x0f,
+                "Rejected triangle was not reported as unsupported");
+        decoder.triangle = nullptr;
+
         std::mt19937 random(0x64);
         for (unsigned trial = 0; trial < 48; ++trial) {
             std::vector<uint32_t> actual(16384), expected;

@@ -5,6 +5,35 @@
 #include <limits>
 
 namespace aurum::rdp {
+namespace {
+int32_t signExtend(uint32_t value, unsigned bits) {
+    const uint32_t sign = 1u << (bits - 1);
+    const uint32_t mask = (1u << bits) - 1;
+    value &= mask;
+    return static_cast<int32_t>((value ^ sign) - sign);
+}
+
+Triangle decodeTriangle(std::span<const uint32_t> words) {
+    Triangle result;
+    result.opcode = (words[0] >> 24) & 63;
+    result.wordCount = static_cast<uint32_t>(words.size());
+    result.shade = (result.opcode & 4u) != 0;
+    result.texture = (result.opcode & 2u) != 0;
+    result.z = (result.opcode & 1u) != 0;
+    result.yl = signExtend(words[0], 14);
+    result.ym = signExtend(words[1] >> 16, 14);
+    result.yh = signExtend(words[1], 14);
+    result.xl = signExtend(words[2], 28);
+    result.dxldy = signExtend(words[3], 30);
+    result.xh = signExtend(words[4], 28);
+    result.dxhdy = signExtend(words[5], 30);
+    result.xm = signExtend(words[6], 28);
+    result.dxmdy = signExtend(words[7], 30);
+    std::copy(words.begin(), words.end(), result.words.begin());
+    return result;
+}
+} // namespace
+
 std::array<uint32_t, 64> StateSnapshot::words() const {
     std::array<uint32_t, 64> result{};
     result[0] = fbFormat; result[1] = fbSize; result[2] = fbWidth; result[3] = fbAddress;
@@ -210,6 +239,12 @@ void Decoder::execute(std::span<const uint32_t> w) {
         rect.scissorMode = scissorMode;
         rect.otherModesHi = otherModesHi; rect.otherModesLo = otherModesLo;
         if (!textureRect || !textureRect(rect)) markUnsupported(w);
+        break;
+    }
+    case 0x08: case 0x09: case 0x0a: case 0x0b:
+    case 0x0c: case 0x0d: case 0x0e: case 0x0f: {
+        const Triangle triangle = decodeTriangle(w);
+        if (!this->triangle || !this->triangle(triangle)) markUnsupported(w);
         break;
     }
     case 0x37: color = b; break;

@@ -39,6 +39,14 @@ struct TextureRect {
     uint32_t clipXh = 0, clipYh = 0, clipXl = 0, clipYl = 0;
     uint32_t scissorMode = 0, otherModesHi = 0, otherModesLo = 0;
 };
+struct Triangle {
+    uint32_t opcode = 0;
+    uint32_t wordCount = 0;
+    bool shade = false, texture = false, z = false;
+    int32_t yl = 0, ym = 0, yh = 0;
+    int32_t xl = 0, dxldy = 0, xh = 0, dxhdy = 0, xm = 0, dxmdy = 0;
+    std::array<uint32_t, 44> words{};
+};
 struct UnsupportedContext {
     uint32_t valid = 0, opcode = 0, wordCount = 0, capturedWords = 0;
     uint64_t command = 0, submission = 0, vi = 0;
@@ -67,6 +75,7 @@ public:
     // Returns true when the rectangle was rendered. A rejected or missing
     // handler is reported as unsupported rather than silently ignored.
     std::function<bool(const TextureRect&)> textureRect;
+    std::function<bool(const Triangle&)> triangle;
     std::function<void()> sync;
     uint64_t commands = 0, unsupported = 0;
     uint64_t opcodeCount(uint8_t opcode) const;
