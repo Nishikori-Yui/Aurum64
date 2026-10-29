@@ -41,7 +41,8 @@ add_custom_command(OUTPUT AurumRDP.metallib
     DEPENDS Sources/AurumRDP/RDP.metal Sources/AurumRDP/ShadeMath.h Sources/AurumRDP/Presentation.metal
         Sources/AurumRDP/TriangleTextureMath.h Sources/AurumRDP/PerspectiveMath.h
         Sources/AurumRDP/TextureDepthMath.h Sources/AurumRDP/CombinerMath.h
-        Sources/AurumRDP/TriangleColorMath.h VERBATIM)
+        Sources/AurumRDP/TriangleColorMath.h Sources/AurumRDP/DepthMath.h
+        Sources/AurumRDP/TriangleDepthMath.h VERBATIM)
 add_custom_target(shaders ALL DEPENDS AurumRDP.metallib)
 add_executable(aurum-rdp-tests Tests/RDPTests.cpp)
 target_link_libraries(aurum-rdp-tests PRIVATE aurum-rdp)
@@ -175,6 +176,28 @@ add_test(NAME alpha-compare-triangle-metal-differential COMMAND aurum-reference-
     "${TRIANGLE_FIXTURES}/alpha-compare.aurcap")
 set_tests_properties(alpha-compare-triangle-metal-differential PROPERTIES
     FIXTURES_REQUIRED "alpha-compare-triangle-reference;alpha-compare-triangle-metal")
+add_test(NAME depth-triangle-generate COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_SOURCE_DIR}/scripts/make_triangle_fixtures.py"
+    "${TRIANGLE_FIXTURES}/depth.aurcap" --depth)
+set_tests_properties(depth-triangle-generate PROPERTIES FIXTURES_SETUP depth-triangle-input)
+add_test(NAME depth-triangle-reference COMMAND aurum-angrylion-reference
+    "${TRIANGLE_FIXTURES}/depth.aurcap" "${TRIANGLE_FIXTURES}/depth-reference")
+set_tests_properties(depth-triangle-reference PROPERTIES
+    FIXTURES_REQUIRED depth-triangle-input FIXTURES_SETUP depth-triangle-reference)
+add_test(NAME depth-triangle-differential COMMAND aurum-triangle-tests
+    "${TRIANGLE_FIXTURES}/depth.aurcap" "${TRIANGLE_FIXTURES}/depth-reference.rdram")
+set_tests_properties(depth-triangle-differential PROPERTIES
+    FIXTURES_REQUIRED depth-triangle-reference)
+add_test(NAME depth-triangle-metal COMMAND aurum-metal-replay
+    "${TRIANGLE_FIXTURES}/depth.aurcap" "${TRIANGLE_FIXTURES}/depth-metal"
+    "${CMAKE_BINARY_DIR}/AurumRDP.metallib")
+set_tests_properties(depth-triangle-metal PROPERTIES
+    FIXTURES_REQUIRED depth-triangle-input FIXTURES_SETUP depth-triangle-metal)
+add_test(NAME depth-triangle-metal-differential COMMAND aurum-reference-diff
+    "${TRIANGLE_FIXTURES}/depth-reference" "${TRIANGLE_FIXTURES}/depth-metal"
+    "${TRIANGLE_FIXTURES}/depth.aurcap")
+set_tests_properties(depth-triangle-metal-differential PROPERTIES
+    FIXTURES_REQUIRED "depth-triangle-reference;depth-triangle-metal")
 add_test(NAME shade-generate COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_SOURCE_DIR}/scripts/make_triangle_fixtures.py" "${TRIANGLE_FIXTURES}/shade.aurcap" --shaded)
 set_tests_properties(shade-generate PROPERTIES FIXTURES_SETUP shade-input)

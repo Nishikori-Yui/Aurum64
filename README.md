@@ -14,10 +14,11 @@ signed point/copy coordinates have independent reference tests. Strictly gated
 one-cycle RGBA16 triangle modes now share a Combiner path for primitive,
 interpolated shade, point TEXEL0 and shade-times-TEXEL0 output, including
 affine/perspective texture coordinates and threshold alpha compare without
-random dither. Their CPU evaluation has independent reference tests; GPU
-validation is pending. Z-tested triangles, additional combiner modes, filtered
-textures, blender, depth, coverage and accurate VI filters remain unfinished.
-The CPU uses the cached
+random dither. A narrow RGBA16 depth-update triangle path also writes the
+reference-compatible compressed Z value, while Z compare, Blender, persistent
+coverage, additional combiner modes, filtered textures and accurate VI filters
+remain unfinished. Their CPU evaluation has independent reference tests; GPU
+validation is pending. The CPU uses the cached
 interpreter, not a JIT.
 There is no claim of real-time performance or commercial-game compatibility.
 
@@ -64,8 +65,9 @@ core but game-driven persistence still needs validation.
   separate pinned reference process, VI color conversion/blanking and offscreen presentation.
 - CPU triangle differential: flat, shade, point TEXEL0 and shade-times-TEXEL0
   one-cycle RGBA16 fixtures, plus threshold alpha-compare cases, compare whole
-  RDRAM and written coverage against the separate reference process; Metal
-  replay remains a required GPU check.
+  RDRAM and written coverage against the separate reference process. The
+  restricted depth-update fixture also compares color and compressed Z writes;
+  Metal replay remains a required GPU check.
 - Original generated ROM: CPU boot without proprietary IPL3, RDP DMA, Metal
   rendering, a small scalar RSP program, silent AI DMA and exact full-frame pixels.
   Texture variants also exercise production LoadTile, RGBA16 TLUT upload, CI8

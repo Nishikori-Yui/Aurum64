@@ -5,6 +5,8 @@ using namespace metal;
 #include "CombinerMath.h"
 #include "TriangleTextureMath.h"
 #include "TriangleColorMath.h"
+#include "DepthMath.h"
+#include "TriangleDepthMath.h"
 struct Fill { uint address, width, size, color, x0, y0, x1, y1; };
 struct Scanout { uint origin, stride, size, width, height, xScale, yScale, xOffset, yOffset, length; };
 struct CopyWord { uint word, high, low; };
@@ -16,6 +18,43 @@ static_assert(sizeof(TriangleWord) == 36);
 static_assert(sizeof(ShadeParameters) == 84);
 static_assert(sizeof(TriangleTextureParameters) == 192);
 static_assert(sizeof(TriangleColorParameters) == 212);
+static_assert(sizeof(TriangleDepthParameters) == 232);
+
+kernel void triangleDepth(device uint* ram [[buffer(0)]],
+                          device const TriangleWord* plan [[buffer(1)]],
+                          constant TriangleDepthParameters& parameters [[buffer(2)]],
+                          uint index [[thread_position_in_grid]]) {
+    TriangleWord item = plan[index];
+    uint colorWord = ram[item.word];
+    uint zWord = 0;
+    uint zWordIndex = 0xffffffffu;
+    bool haveZWord = false;
+    const CombinerColor primitive = primitiveCombinerColor(parameters.color.primitiveColor);
+    const uint color = simpleCombinerRGBA16(parameters.color.combineHi, parameters.color.combineLo,
+                                            CombinerColor{}, CombinerColor{}, primitive);
+    const auto readZ = [&](int x, int y, uint& address, uint& stored) {
+        address = parameters.zbAddress + (uint(y) * parameters.zbWidth + uint(x)) * 2u;
+        zWordIndex = address >> 2;
+        if (!haveZWord) {
+            zWord = ram[zWordIndex];
+            haveZWord = true;
+        }
+        const uint shift = (((address >> 1) ^ 1u) & 1u) * 16u;
+        stored = (zWord >> shift) & 0xffffu;
+        return shift;
+    };
+    const auto writeLane = [&](int x, int y, uint value, uint& destination) {
+        uint address = 0, stored = 0;
+        const uint shift = readZ(x, y, address, stored);
+        destination = color | (value & 1u);
+        const uint zValue = depthCompress(parameters.zValue) | (parameters.dzEncoded >> 2);
+        zWord = (zWord & ~(0xffffu << shift)) | (zValue << shift);
+    };
+    if (item.high != 0xffffffffu) writeLane(item.highX, item.highY, item.high, colorWord);
+    if (item.low != 0xffffffffu) writeLane(item.lowX, item.lowY, item.low, colorWord);
+    ram[item.word] = colorWord;
+    if (haveZWord) ram[zWordIndex] = zWord;
+}
 
 kernel void triangleColor(device uint* ram [[buffer(0)]],
                           device const TriangleWord* plan [[buffer(1)]],

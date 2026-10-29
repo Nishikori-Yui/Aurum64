@@ -4,6 +4,7 @@
 #include "TriangleMode.hpp"
 #include "TriangleTexture.hpp"
 #include "TriangleColor.hpp"
+#include "TriangleDepth.hpp"
 #include "TextureCopy.hpp"
 #import <Metal/Metal.h>
 #include <algorithm>
@@ -14,7 +15,7 @@ struct Renderer::Impl {
     id<MTLDevice> device;
     id<MTLCommandQueue> queue;
     id<MTLComputePipelineState> fillPipeline, viPipeline, copyPipeline, trianglePipeline,
-        textureTrianglePipeline, colorTrianglePipeline;
+        textureTrianglePipeline, colorTrianglePipeline, depthTrianglePipeline;
     id<MTLBuffer> ram, output;
     bool finish(id<MTLCommandBuffer> command, std::string& error) {
         [command commit]; [command waitUntilCompleted];
@@ -42,11 +43,12 @@ bool Renderer::initialize(const char* path, std::string& error) {
         p.trianglePipeline = [p.device newComputePipelineStateWithFunction:[library newFunctionWithName:@"triangleFill"] error:&e];
         p.textureTrianglePipeline = [p.device newComputePipelineStateWithFunction:[library newFunctionWithName:@"triangleTexture"] error:&e];
         p.colorTrianglePipeline = [p.device newComputePipelineStateWithFunction:[library newFunctionWithName:@"triangleColor"] error:&e];
+        p.depthTrianglePipeline = [p.device newComputePipelineStateWithFunction:[library newFunctionWithName:@"triangleDepth"] error:&e];
         p.queue = [p.device newCommandQueue];
         p.ram = [p.device newBufferWithLength:8 * 1024 * 1024 options:MTLResourceStorageModeShared];
         p.output = [p.device newBufferWithLength:640 * 576 * 4 options:MTLResourceStorageModeShared];
         if (!p.fillPipeline || !p.viPipeline || !p.copyPipeline || !p.trianglePipeline ||
-            !p.textureTrianglePipeline || !p.colorTrianglePipeline ||
+            !p.textureTrianglePipeline || !p.colorTrianglePipeline || !p.depthTrianglePipeline ||
             !p.queue || !p.ram || !p.output) {
             error = e.localizedDescription.UTF8String ?: "Cannot allocate Metal resources."; return false;
         }
@@ -126,6 +128,44 @@ bool Renderer::combinerTriangle(uint8_t* memory, size_t length, const Triangle& 
         [encoder setBytes:&parameters length:sizeof(parameters) atIndex:3];
         [encoder dispatchThreads:MTLSizeMake(words.size(), 1, 1)
           threadsPerThreadgroup:MTLSizeMake(p.colorTrianglePipeline.threadExecutionWidth, 1, 1)];
+        [encoder endEncoding];
+        if (!p.finish(command, error)) return false;
+        memcpy(memory, p.ram.contents, length);
+        return true;
+    }
+}
+bool Renderer::depthTriangle(uint8_t* memory, size_t length, const Triangle& triangle,
+                             std::string& error) {
+    if (!memory || !impl->ram || !length || length % 4 || length > impl->ram.length) {
+        error = "Invalid opaque depth triangle memory or renderer.";
+        return false;
+    }
+    std::vector<TriangleWord> words;
+    if (!makeOpaqueDepthPlan(triangle, length, words, error)) return false;
+    if (words.empty()) return true;
+    @autoreleasepool {
+        auto& p = *impl;
+        id<MTLBuffer> plan = [p.device newBufferWithBytes:words.data()
+                                                    length:words.size() * sizeof(words[0])
+                                                   options:MTLResourceStorageModeShared];
+        if (!plan) {
+            error = "Cannot allocate opaque depth triangle plan.";
+            return false;
+        }
+        const auto parameters = makeTriangleDepthParameters(triangle);
+        memcpy(p.ram.contents, memory, length);
+        id<MTLCommandBuffer> command = [p.queue commandBuffer];
+        id<MTLComputeCommandEncoder> encoder = [command computeCommandEncoder];
+        if (!command || !encoder) {
+            error = "Cannot create opaque depth triangle command.";
+            return false;
+        }
+        [encoder setComputePipelineState:p.depthTrianglePipeline];
+        [encoder setBuffer:p.ram offset:0 atIndex:0];
+        [encoder setBuffer:plan offset:0 atIndex:1];
+        [encoder setBytes:&parameters length:sizeof(parameters) atIndex:2];
+        [encoder dispatchThreads:MTLSizeMake(words.size(), 1, 1)
+          threadsPerThreadgroup:MTLSizeMake(p.depthTrianglePipeline.threadExecutionWidth, 1, 1)];
         [encoder endEncoding];
         if (!p.finish(command, error)) return false;
         memcpy(memory, p.ram.contents, length);

@@ -136,6 +136,8 @@ EXPORT int CALL RomOpen() {
     };
     decoder.triangle = [](const aurum::rdp::Triangle& triangle) {
         std::string error;
+        if (aurum::rdp::isDepthUpdateTriangle(triangle))
+            return renderer->depthTriangle(info.RDRAM, memorySize(), triangle, error);
         if (aurum::rdp::isSimpleCombinerTriangle(triangle))
             return renderer->combinerTriangle(info.RDRAM, memorySize(), triangle, textures.store(), error);
         if (aurum::rdp::isTexturedTriangle(triangle))

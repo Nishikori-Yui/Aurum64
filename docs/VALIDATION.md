@@ -616,3 +616,21 @@ accepted/rejected pixel ownership are covered by unit and differential tests.
 The production Metal kernel contains the same threshold decision. Its runtime
 and Metal differential tests are present in CTest but remain unavailable in
 the current no-device environment.
+
+# Restricted depth update - 2026-10-29
+
+The triangle path now has a deliberately narrow depth-update slice for
+primitive-color RGBA16 triangles: cycle 0, no shade/texture attributes, no AA,
+Blender or alpha compare, and `z_update_en` with Z compare disabled. It writes
+the compressed 16-bit Z representation to the snapshotted Z image while
+preserving the existing word-owned color and coverage writes. Shared depth
+math has unit controls for compression, decompression, delta encoding and
+opaque compare behavior; compare is not yet connected to production.
+
+The 320-case depth fixture uses overlapping color/Z targets, varying primitive
+Z, both edge orientations and fractional clipping. Its CPU path compares whole
+RDRAM, including color and compressed Z writes, against the independent
+reference. Metal replay and differential tests are registered but remain
+unavailable in the current environment because no Metal device is present.
+Persistent hidden coverage and Z compare/update interaction remain the next C4
+work, so this does not complete depth support or M6.

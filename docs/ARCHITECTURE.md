@@ -89,9 +89,10 @@ curve with the independently checked segment-six quantization; no renderer
 lookup table is embedded. Intermediate attribute and divider probes invoke
 the pinned reference's real routines in the separate test executable.
 These stages have CPU evidence and mandatory GPU tests, not a GPU-pass claim.
-Depth interpolation/clamping is diagnostic only. General two-cycle combiner,
-blender/depth testing, persistent hidden coverage, LOD and filtered VI remain
-unfinished.
+Depth interpolation/clamping remains diagnostic for shaded/textured triangles.
+A restricted primitive-color RGBA16 depth-update mode now writes compressed Z
+with the same host-word ownership as color; Z compare, two-cycle combiner,
+blender, persistent hidden coverage, LOD and filtered VI remain unfinished.
 
 The isolated point-fetch helper also decodes IA8, IA16 and I8 from
 reference-verified TMEM layouts. This is a sampler/test capability only: those

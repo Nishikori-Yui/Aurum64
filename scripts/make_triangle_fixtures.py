@@ -3,6 +3,7 @@
 """Original triangle command matrices; no external assets or renderer code."""
 import pathlib
 import random
+import struct
 import argparse
 
 from make_reference_fixtures import (initial, memory, rdp, scissor, serialize, set_image,
@@ -20,10 +21,39 @@ def pack_attributes(channels):
     return words
 
 
+def depth_compress(value):
+    bucket = (value >> 11) & 0x7f
+    if bucket <= 0x3f:
+        return (value >> 4) & 0x1ffc
+    if bucket <= 0x5f:
+        return ((value >> 3) & 0x1ffc) | 0x2000
+    if bucket <= 0x6f:
+        return ((value >> 2) & 0x1ffc) | 0x4000
+    if bucket <= 0x77:
+        return ((value >> 1) & 0x1ffc) | 0x6000
+    if bucket <= 0x7b:
+        return (value & 0x1ffc) | 0x8000
+    if bucket <= 0x7d:
+        return ((value << 1) & 0x1ffc) | 0xa000
+    if bucket == 0x7e:
+        return ((value << 2) & 0x1ffc) | 0xc000
+    return ((value << 2) & 0x1ffc) | 0xe000
+
+
 def matrix(memory_bytes=4 << 20, seed=0x7A1A, shaded=False, textured=False,
-           alpha_compare=False):
+           alpha_compare=False, depth=False):
     rng = random.Random(seed)
     records = [initial(memory_bytes), memory(2, 0x200000, b"\x6b\x5a" * (320 * 1024))]
+    if depth:
+        depth_seed = bytearray(320 * 2048)
+        for case in range(320):
+            z = 0x2000 + (case % 16) * 0x400
+            stored = max(0, z - 0x100) if case % 2 == 0 else min(0x3ffff, z + 0x100)
+            encoded = struct.pack(">H", depth_compress(stored))
+            base = case * 2048
+            for offset in range(0, 32 * 96 * 2, 2):
+                depth_seed[base + offset:base + offset + 2] = encoded
+        records.append(memory(3, 0x300000, bytes(depth_seed)))
     words = []
     if textured:
         source = b"".join((((x * 2 + 1) << 11) | ((y * 2) << 6) |
@@ -71,12 +101,18 @@ def matrix(memory_bytes=4 << 20, seed=0x7A1A, shaded=False, textured=False,
             xh, xm, xl = (2 if left_major else 10) << 16, 10 << 16, 2 << 16
             slopes = [0, 0, -65536]
             clip = (0, 0, 128, 96)
+        depth_address = 0x300000 + (destination - 0x200000)
         color = rng.getrandbits(32)
         words += set_image(2, destination, width) + scissor(*clip)
         mode = 0xf0
+        mode_lo = 0
         combine_hi = 0xffffff
         combine = 0xfffe793c if shaded else 0xfffdf6fb
         tile = 0
+        depth_z = 0x2000 + (case % 16) * 0x400
+        if depth:
+            mode_lo = 0x20
+            words += [0x3e000000, depth_address]
         if textured:
             mode = 0x8f0 | (((case // 2) & 1) << 19)
             if shaded:
@@ -99,10 +135,12 @@ def matrix(memory_bytes=4 << 20, seed=0x7A1A, shaded=False, textured=False,
         if alpha_compare:
             threshold = (case * 29 + 37) & 0xff
             words += [0x39000000, threshold]
-        words += [0xef000000 | mode, 1 if alpha_compare else 0,
+        words += [0xef000000 | mode, mode_lo | (1 if alpha_compare else 0),
                   0xfc000000 | combine_hi, combine,
                   0xfa000000, color]
-        if textured and shaded:
+        if depth:
+            triangle_opcode = 0xc9000000
+        elif textured and shaded:
             triangle_opcode = 0xce000000 | (tile << 16)
         elif textured:
             triangle_opcode = 0xca000000 | (tile << 16)
@@ -141,7 +179,9 @@ def matrix(memory_bytes=4 << 20, seed=0x7A1A, shaded=False, textured=False,
             else:
                 stw = [[rng.getrandbits(32) for _ in range(4)] for _ in range(3)]
             words += pack_attributes(stw)
-    records.append(rdp(4 if textured else 3, 0x10000, words + [0xe9000000, 0]))
+        if depth:
+            words += [depth_z << 13, 0, 0, 0]
+    records.append(rdp(4 if textured or depth else 3, 0x10000, words + [0xe9000000, 0]))
     return serialize(records)
 
 
@@ -153,10 +193,11 @@ if __name__ == "__main__":
     parser.add_argument("--shaded", action="store_true")
     parser.add_argument("--textured", action="store_true")
     parser.add_argument("--alpha-compare", action="store_true")
+    parser.add_argument("--depth", action="store_true")
     args = parser.parse_args()
     destination = args.destination
     destination.parent.mkdir(parents=True, exist_ok=True)
-    if args.alpha_compare and (args.shaded or args.textured):
-        parser.error("--alpha-compare is currently limited to primitive-color fixtures")
+    if (args.alpha_compare or args.depth) and (args.shaded or args.textured):
+        parser.error("alpha-compare/depth are currently limited to primitive-color fixtures")
     destination.write_bytes(matrix(args.memory, args.seed, args.shaded, args.textured,
-                                   args.alpha_compare))
+                                   args.alpha_compare, args.depth))

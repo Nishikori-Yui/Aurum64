@@ -257,6 +257,9 @@ int main(int argc, char** argv) {
                                         output.textures.store(), error);
         };
         decoder.triangle = [&](const aurum::rdp::Triangle& triangle) {
+            if (aurum::rdp::isDepthUpdateTriangle(triangle))
+                return renderer.depthTriangle(output.rdram.data(), output.rdram.size(),
+                                              triangle, error);
             if (aurum::rdp::isSimpleCombinerTriangle(triangle))
                 return renderer.combinerTriangle(output.rdram.data(), output.rdram.size(),
                                                  triangle, output.textures.store(), error);

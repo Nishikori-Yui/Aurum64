@@ -5,6 +5,7 @@
 #include "TrianglePlan.hpp"
 #include "TriangleReference.hpp"
 #include "TriangleColor.hpp"
+#include "TriangleDepth.hpp"
 #include "TriangleTexture.hpp"
 #include "TriangleTextureDepth.hpp"
 #include <cstdio>
@@ -96,6 +97,11 @@ static void attributeTests() {
 }
 
 static void unitTests() {
+    require(depthCompress(0x5400) == 0x540 &&
+            depthDecompress(depthCompress(0x5400)) == 0x5400 &&
+            depthDeltaCompress(0x100) != 0 &&
+            depthOpaquePass(0x1234, 0xffff, 0, 1, 0),
+            "Depth compression and opaque compare controls");
     Decoder decoder;
     Triangle triangle;
     decoder.triangle = [&](const Triangle& value) { triangle = value; return true; };
@@ -269,47 +275,73 @@ static void compare(const char* capture, const char* reference) {
     decoder.textureLoad = [&](const TextureLoad& load) { return textures.load(memory.data(), memory.size(), load); };
     size_t draws = 0, pixels = 0, shadedDraws = 0, texturedDraws = 0;
     decoder.triangle = [&](const Triangle& triangle) {
+        const bool depth = isDepthUpdateTriangle(triangle);
         const bool simple = isSimpleCombinerTriangle(triangle);
-        require(simple, "Differential fixture mode rejected");
+        require(depth || simple, "Differential fixture mode rejected");
         if (triangle.shade) ++shadedDraws;
         if (triangle.texture) ++texturedDraws;
         std::vector<TriangleWord> plan;
-        require(makeTriangleColorPlan(triangle, memory.size(), plan, error), error.c_str());
+        require(depth ? makeOpaqueDepthPlan(triangle, memory.size(), plan, error) :
+                        makeTriangleColorPlan(triangle, memory.size(), plan, error), error.c_str());
         auto oracle = memory;
         uint32_t previous = 0;
         bool first = true;
         std::set<std::pair<int32_t, int32_t>> acceptedPixels;
         const auto parameters = makeTriangleColorParameters(triangle);
+        const auto depthParameters = makeTriangleDepthParameters(triangle);
         for (auto word : plan) {
-            uint16_t high = word.high, low = word.low;
             uint32_t writeMask = 0;
-            require(triangleColorWord(parameters, triangle.texture ? &textures.store() : nullptr,
-                                       word, high, low, writeMask), "Scalar combiner evaluation");
-            const bool highWrite = word.high != UINT32_MAX && (writeMask & 1u);
-            const bool lowWrite = word.low != UINT32_MAX && (writeMask & 2u);
-            if (highWrite) {
-                high = uint16_t((high & 0xfffeu) | (word.high & 1u));
+            if (depth) {
+                uint32_t oracleMask = 0;
+                require(opaqueDepthWord(memory.data(), memory.size(), depthParameters, word, writeMask),
+                        "Scalar depth evaluation");
+                require(opaqueDepthWord(oracle.data(), oracle.size(), depthParameters, word, oracleMask) &&
+                            oracleMask == writeMask, "Scalar depth oracle evaluation");
+            } else {
+                uint16_t high = word.high, low = word.low;
+                require(triangleColorWord(parameters, triangle.texture ? &textures.store() : nullptr,
+                                           word, high, low, writeMask), "Scalar combiner evaluation");
+                const bool highWrite = word.high != UINT32_MAX && (writeMask & 1u);
+                const bool lowWrite = word.low != UINT32_MAX && (writeMask & 2u);
+                if (highWrite) {
+                    high = uint16_t((high & 0xfffeu) | (word.high & 1u));
+                    acceptedPixels.emplace(word.highX, word.highY);
+                    ++pixels;
+                }
+                if (lowWrite) {
+                    low = uint16_t((low & 0xfffeu) | (word.low & 1u));
+                    acceptedPixels.emplace(word.lowX, word.lowY);
+                    ++pixels;
+                }
+                require(first || word.word > previous, "Duplicate/out-of-order GPU word ownership");
+                first = false; previous = word.word;
+                const auto apply = [&](std::vector<uint8_t>& target) {
+                    uint32_t value;
+                    require(aurum::memory::readWord(target.data(), target.size(), word.word * 4, value),
+                            "Plan read");
+                    if (highWrite) value = (value & 0xffff) | (uint32_t(high) << 16);
+                    if (lowWrite) value = (value & 0xffff0000) | low;
+                    require(aurum::memory::writeWord(target.data(), target.size(), word.word * 4, value),
+                            "Plan write");
+                };
+                apply(memory);
+                apply(oracle);
+                continue;
+            }
+            if (writeMask & 1u) {
                 acceptedPixels.emplace(word.highX, word.highY);
                 ++pixels;
             }
-            if (lowWrite) {
-                low = uint16_t((low & 0xfffeu) | (word.low & 1u));
+            if (writeMask & 2u) {
                 acceptedPixels.emplace(word.lowX, word.lowY);
                 ++pixels;
             }
+            const bool highWrite = word.high != UINT32_MAX && (writeMask & 1u);
+            const bool lowWrite = word.low != UINT32_MAX && (writeMask & 2u);
             require(first || word.word > previous, "Duplicate/out-of-order GPU word ownership");
             first = false; previous = word.word;
-            const auto apply = [&](std::vector<uint8_t>& target) {
-                uint32_t value;
-                require(aurum::memory::readWord(target.data(), target.size(), word.word * 4, value),
-                        "Plan read");
-                if (highWrite) value = (value & 0xffff) | (uint32_t(high) << 16);
-                if (lowWrite) value = (value & 0xffff0000) | low;
-                require(aurum::memory::writeWord(target.data(), target.size(), word.word * 4, value),
-                        "Plan write");
-            };
-            apply(memory);
-            apply(oracle);
+            (void)highWrite;
+            (void)lowWrite;
         }
         auto spans = generateTriangleSpans(triangle);
         clipTriangleSpans(spans, triangle.clipXh, triangle.clipYh, triangle.clipXl, triangle.clipYl);

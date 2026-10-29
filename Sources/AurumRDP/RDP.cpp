@@ -298,6 +298,7 @@ void Decoder::execute(std::span<const uint32_t> w) {
         triangle.tileSh = tileSizes_[triangle.tile * 4 + 2];
         triangle.tileTh = tileSizes_[triangle.tile * 4 + 3];
         triangle.tileModes = tileModes_[triangle.tile];
+        triangle.zbAddress = zbAddress;
         triangle.cycleType = cycle;
         triangle.fbFormat = format;
         triangle.fbSize = size;
