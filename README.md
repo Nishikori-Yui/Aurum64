@@ -11,11 +11,12 @@ rectangles, and a narrower IA8/I8 copy envelope with zero S/T origin, unit
 derivatives, no flip and default tile addressing. Unsupported IA8/I8 address
 variants are rejected. The renderer also has basic VI scanout. TMEM uploads and
 signed point/copy coordinates have independent reference tests. Strictly gated
-primitive-color, interpolated shade and RGBA16 point-textured triangle modes
-are wired through Metal, including affine/perspective texture coordinates.
-Their CPU evaluation has independent reference tests; GPU validation is
-pending. Z-tested triangles, other combiner modes, filtered textures, blender, depth,
-coverage and accurate VI filters remain unfinished. The CPU uses the cached
+one-cycle RGBA16 triangle modes now share a Combiner path for primitive,
+interpolated shade, point TEXEL0 and shade-times-TEXEL0 output, including
+affine/perspective texture coordinates. Their CPU evaluation has independent
+reference tests; GPU validation is pending. Z-tested triangles, additional
+combiner modes, filtered textures, blender, depth, coverage and accurate VI
+filters remain unfinished. The CPU uses the cached
 interpreter, not a JIT.
 There is no claim of real-time performance or commercial-game compatibility.
 
@@ -60,6 +61,9 @@ core but game-driven persistence still needs validation.
 - Metal: RGBA16/RGBA32 fills, 48 seeded randomized comparisons with our scalar
   byte-address reference, 391 original RGBA16/CI4/CI8 copy draws compared with a
   separate pinned reference process, VI color conversion/blanking and offscreen presentation.
+- CPU triangle differential: flat, shade, point TEXEL0 and shade-times-TEXEL0
+  one-cycle RGBA16 fixtures compare whole RDRAM and written coverage against
+  the separate reference process; Metal replay remains a required GPU check.
 - Original generated ROM: CPU boot without proprietary IPL3, RDP DMA, Metal
   rendering, a small scalar RSP program, silent AI DMA and exact full-frame pixels.
   Texture variants also exercise production LoadTile, RGBA16 TLUT upload, CI8
@@ -144,8 +148,9 @@ synchronous implementation, with no performance claim.
 
 1. Versioned captures with memory/VI snapshots and an independently licensed
    software-reference harness; characterize RDP/VI edge cases before extending.
-2. TMEM uploads and sampling, triangle setup/rasterization, combiner/blender,
-   depth/coverage and VI reconstruction, with differential tests at each step.
+2. TMEM uploads and sampling, triangle setup/rasterization, the remaining
+   combiner/blender modes, depth/coverage and VI reconstruction, with
+   differential tests at each step.
 3. Persist renderer state with core saves; validate cartridge persistence,
    controller hotplug, audio timing, accessibility and native app lifecycle.
 4. ARM64 dynarec with macOS JIT constraints, tile scheduling, resource ownership

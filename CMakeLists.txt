@@ -39,7 +39,9 @@ add_custom_command(OUTPUT AurumRDP.metallib
     COMMAND xcrun -sdk macosx metal "-fmodules-cache-path=${CMAKE_BINARY_DIR}/metal-module-cache" -c "${CMAKE_SOURCE_DIR}/Sources/AurumRDP/Presentation.metal" -o Presentation.air
     COMMAND xcrun -sdk macosx metallib AurumRDP.air Presentation.air -o AurumRDP.metallib
     DEPENDS Sources/AurumRDP/RDP.metal Sources/AurumRDP/ShadeMath.h Sources/AurumRDP/Presentation.metal
-        Sources/AurumRDP/TriangleTextureMath.h Sources/AurumRDP/PerspectiveMath.h Sources/AurumRDP/TextureDepthMath.h VERBATIM)
+        Sources/AurumRDP/TriangleTextureMath.h Sources/AurumRDP/PerspectiveMath.h
+        Sources/AurumRDP/TextureDepthMath.h Sources/AurumRDP/CombinerMath.h
+        Sources/AurumRDP/TriangleColorMath.h VERBATIM)
 add_custom_target(shaders ALL DEPENDS AurumRDP.metallib)
 add_executable(aurum-rdp-tests Tests/RDPTests.cpp)
 target_link_libraries(aurum-rdp-tests PRIVATE aurum-rdp)
@@ -166,6 +168,28 @@ set_tests_properties(shade-metal PROPERTIES FIXTURES_REQUIRED shade-input FIXTUR
 add_test(NAME shade-metal-differential COMMAND aurum-reference-diff
     "${TRIANGLE_FIXTURES}/shade-reference" "${TRIANGLE_FIXTURES}/shade-metal" "${TRIANGLE_FIXTURES}/shade.aurcap")
 set_tests_properties(shade-metal-differential PROPERTIES FIXTURES_REQUIRED "shade-reference;shade-metal")
+add_test(NAME shade-textured-triangle-generate COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_SOURCE_DIR}/scripts/make_triangle_fixtures.py"
+    "${TRIANGLE_FIXTURES}/shade-textured.aurcap" --shaded --textured)
+set_tests_properties(shade-textured-triangle-generate PROPERTIES FIXTURES_SETUP shade-textured-triangle-input)
+add_test(NAME shade-textured-triangle-reference COMMAND aurum-angrylion-reference
+    "${TRIANGLE_FIXTURES}/shade-textured.aurcap" "${TRIANGLE_FIXTURES}/shade-textured-reference")
+set_tests_properties(shade-textured-triangle-reference PROPERTIES
+    FIXTURES_REQUIRED shade-textured-triangle-input FIXTURES_SETUP shade-textured-triangle-reference)
+add_test(NAME shade-textured-triangle-differential COMMAND aurum-triangle-tests
+    "${TRIANGLE_FIXTURES}/shade-textured.aurcap" "${TRIANGLE_FIXTURES}/shade-textured-reference.rdram")
+set_tests_properties(shade-textured-triangle-differential PROPERTIES
+    FIXTURES_REQUIRED shade-textured-triangle-reference)
+add_test(NAME shade-textured-triangle-metal COMMAND aurum-metal-replay
+    "${TRIANGLE_FIXTURES}/shade-textured.aurcap" "${TRIANGLE_FIXTURES}/shade-textured-metal"
+    "${CMAKE_BINARY_DIR}/AurumRDP.metallib")
+set_tests_properties(shade-textured-triangle-metal PROPERTIES
+    FIXTURES_REQUIRED shade-textured-triangle-input FIXTURES_SETUP shade-textured-triangle-metal)
+add_test(NAME shade-textured-triangle-metal-differential COMMAND aurum-reference-diff
+    "${TRIANGLE_FIXTURES}/shade-textured-reference" "${TRIANGLE_FIXTURES}/shade-textured-metal"
+    "${TRIANGLE_FIXTURES}/shade-textured.aurcap")
+set_tests_properties(shade-textured-triangle-metal-differential PROPERTIES
+    FIXTURES_REQUIRED "shade-textured-triangle-reference;shade-textured-triangle-metal")
 add_test(NAME textured-triangle-generate COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_SOURCE_DIR}/scripts/make_triangle_fixtures.py" "${TRIANGLE_FIXTURES}/textured.aurcap" --textured)
 set_tests_properties(textured-triangle-generate PROPERTIES FIXTURES_SETUP textured-triangle-input)

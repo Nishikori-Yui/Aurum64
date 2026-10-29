@@ -576,3 +576,26 @@ the 192-byte texture parameters and 36-byte word plan.
 
 This is a tested CPU implementation and compiled GPU integration, not a
 completed M5/M6 milestone or a compatibility release.
+
+# One-cycle Combiner C1 - 2026-10-29
+
+The production triangle callback now routes a restricted one-cycle RGBA16
+Combiner through a shared CPU/MSL parameter block. Supported output sources are
+primitive color, interpolated shade, point-sampled RGBA16 TEXEL0 and
+shade-times-TEXEL0. Selector validation rejects unsupported sources before any
+framebuffer write; two-cycle, blender, depth, AA, dithering and alpha-compare
+states remain rejected.
+
+The new 320-case shade-times-TEXEL0 fixture covers both major-edge directions,
+fractional coordinates, clipping, tile origins, affine/perspective W, varying
+shade gradients and RGBA16 TMEM fetches. Its CPU path matches the separate
+Angrylion reference for whole RDRAM and written coverage. The existing flat,
+shade and point-textured CPU differential fixtures also remain passing after
+moving through the shared Combiner evaluator.
+
+The Metal shader compiles and the CMake graph includes
+generate/reference/CPU-differential/Metal-replay/differential tests for this
+mode. The current environment has no Metal device, so GPU execution is still
+pending and is not reported as passed. This completes an M6 C1 implementation
+slice; alpha/dither, two-cycle, depth, blender and persistent hidden coverage
+remain future slices.

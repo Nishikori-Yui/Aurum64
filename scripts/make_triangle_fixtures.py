@@ -73,11 +73,19 @@ def matrix(memory_bytes=4 << 20, seed=0x7A1A, shaded=False, textured=False):
         color = rng.getrandbits(32)
         words += set_image(2, destination, width) + scissor(*clip)
         mode = 0xf0
+        combine_hi = 0xffffff
         combine = 0xfffe793c if shaded else 0xfffdf6fb
         tile = 0
         if textured:
             mode = 0x8f0 | (((case // 2) & 1) << 19)
-            combine = 0xfffcf279
+            if shaded:
+                # One-cycle: TEXEL0 * SHADE for RGB and alpha. Unused
+                # cycle-zero selectors are deliberately left at zero.
+                combine_hi = (1 << 5) | 4
+                combine = ((15 << 24) | (1 << 21) | (4 << 18) |
+                           (7 << 6) | (7 << 3) | 7)
+            else:
+                combine = 0xfffcf279
             tile = case % 8
             descriptor = set_tile(tile, 0, 2, (0, 1, 4, 5)[case % 4], (0, 128)[case // 4 % 2])
             descriptor[1] |= ((case % 4) << 4) | (((case >> 2) & 1) << 8) | (((case >> 3) & 1) << 9)
@@ -87,10 +95,17 @@ def matrix(memory_bytes=4 << 20, seed=0x7A1A, shaded=False, textured=False):
             origin_s, origin_t = case % 5, case % 7
             words += descriptor + [0xf2000000 | (origin_s << 12) | origin_t,
                                     (tile << 24) | (60 << 12) | 60]
-        words += [0xef000000 | mode, 0, 0xfcffffff, combine,
+        words += [0xef000000 | mode, 0, 0xfc000000 | combine_hi, combine,
                   0xfa000000, color]
-        words += [((0xca000000 | (tile << 16)) if textured else 0xcc000000 if shaded else 0xc8000000) |
-                  (left_major << 23) | (yl & 0x3fff),
+        if textured and shaded:
+            triangle_opcode = 0xce000000 | (tile << 16)
+        elif textured:
+            triangle_opcode = 0xca000000 | (tile << 16)
+        elif shaded:
+            triangle_opcode = 0xcc000000
+        else:
+            triangle_opcode = 0xc8000000
+        words += [triangle_opcode | (left_major << 23) | (yl & 0x3fff),
                   ((ym & 0x3fff) << 16) | (yh & 0x3fff),
                   xl & 0xffffffff, slopes[0] & 0xffffffff,
                   xh & 0xffffffff, slopes[1] & 0xffffffff,
@@ -135,6 +150,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
     destination = args.destination
     destination.parent.mkdir(parents=True, exist_ok=True)
-    if args.shaded and args.textured:
-        parser.error("Choose one triangle matrix mode")
     destination.write_bytes(matrix(args.memory, args.seed, args.shaded, args.textured))

@@ -2,6 +2,8 @@
 #pragma once
 
 #include "RDP.hpp"
+#include "ShadeMath.h"
+#include "CombinerMath.h"
 
 namespace aurum::rdp {
 // (0 - 0) * 0 + PRIMITIVE, for both RGB and alpha in both cycles.
@@ -49,5 +51,18 @@ inline bool isTexturedTriangle(const Triangle& triangle) {
            triangle.scissorMode == 0 && modes == 0x8f0u && triangle.otherModesLo == 0 &&
            triangle.combineValid && triangle.combineHi == kFlatPrimitiveCombineHi &&
            triangle.combineLo == kTextureCombineLo && triangle.tileFormat == 0 && triangle.tileSize == 2;
+}
+
+inline bool isSimpleCombinerTriangle(const Triangle& triangle) {
+    const uint32_t modes = triangle.otherModesHi & ~(1u << 19);
+    const uint32_t expectedModes = triangle.texture ? 0x8f0u : kFlatPrimitiveModesHi;
+    return !triangle.z && triangle.cycleType == 0 && triangle.fbFormat == 0 &&
+           triangle.fbSize == 2 && triangle.scissorMode == 0 &&
+           modes == expectedModes && triangle.otherModesLo == 0 &&
+           triangle.combineValid &&
+           simpleCombinerSupported(triangle.combineHi, triangle.combineLo,
+                                   triangle.texture, triangle.shade,
+                                   triangle.primitiveColorValid) &&
+           (!triangle.texture || (triangle.tileFormat == 0 && triangle.tileSize == 2));
 }
 } // namespace aurum::rdp

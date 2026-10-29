@@ -3,6 +3,7 @@
 #include "TrianglePlan.hpp"
 #include "TriangleMode.hpp"
 #include "TriangleTexture.hpp"
+#include "TriangleColor.hpp"
 #include "TextureCopy.hpp"
 #import <Metal/Metal.h>
 #include <algorithm>
@@ -12,7 +13,8 @@ namespace aurum::rdp {
 struct Renderer::Impl {
     id<MTLDevice> device;
     id<MTLCommandQueue> queue;
-    id<MTLComputePipelineState> fillPipeline, viPipeline, copyPipeline, trianglePipeline, textureTrianglePipeline;
+    id<MTLComputePipelineState> fillPipeline, viPipeline, copyPipeline, trianglePipeline,
+        textureTrianglePipeline, colorTrianglePipeline;
     id<MTLBuffer> ram, output;
     bool finish(id<MTLCommandBuffer> command, std::string& error) {
         [command commit]; [command waitUntilCompleted];
@@ -39,10 +41,12 @@ bool Renderer::initialize(const char* path, std::string& error) {
         p.copyPipeline = [p.device newComputePipelineStateWithFunction:[library newFunctionWithName:@"textureCopy"] error:&e];
         p.trianglePipeline = [p.device newComputePipelineStateWithFunction:[library newFunctionWithName:@"triangleFill"] error:&e];
         p.textureTrianglePipeline = [p.device newComputePipelineStateWithFunction:[library newFunctionWithName:@"triangleTexture"] error:&e];
+        p.colorTrianglePipeline = [p.device newComputePipelineStateWithFunction:[library newFunctionWithName:@"triangleColor"] error:&e];
         p.queue = [p.device newCommandQueue];
         p.ram = [p.device newBufferWithLength:8 * 1024 * 1024 options:MTLResourceStorageModeShared];
         p.output = [p.device newBufferWithLength:640 * 576 * 4 options:MTLResourceStorageModeShared];
-        if (!p.fillPipeline || !p.viPipeline || !p.copyPipeline || !p.trianglePipeline || !p.textureTrianglePipeline ||
+        if (!p.fillPipeline || !p.viPipeline || !p.copyPipeline || !p.trianglePipeline ||
+            !p.textureTrianglePipeline || !p.colorTrianglePipeline ||
             !p.queue || !p.ram || !p.output) {
             error = e.localizedDescription.UTF8String ?: "Cannot allocate Metal resources."; return false;
         }
@@ -79,6 +83,49 @@ bool Renderer::textureCopy(uint8_t* memory, size_t length, const TextureRect& re
         [encoder setBytes:&copyOptions length:sizeof(copyOptions) atIndex:3];
         [encoder dispatchThreads:MTLSizeMake(words.size(), 1, 1)
           threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+        [encoder endEncoding];
+        if (!p.finish(command, error)) return false;
+        memcpy(memory, p.ram.contents, length);
+        return true;
+    }
+}
+bool Renderer::combinerTriangle(uint8_t* memory, size_t length, const Triangle& triangle,
+                                const aurum::tmem::Store& tmem, std::string& error) {
+    if (!memory || !impl->ram || !length || length % 4 || length > impl->ram.length) {
+        error = "Invalid one-cycle combiner triangle memory or renderer.";
+        return false;
+    }
+    std::vector<TriangleWord> words;
+    if (!makeTriangleColorPlan(triangle, length, words, error)) return false;
+    if (words.empty()) return true;
+    @autoreleasepool {
+        auto& p = *impl;
+        std::array<uint8_t, aurum::tmem::Store::kBytes> bytes{};
+        tmem.copyBytes(bytes);
+        id<MTLBuffer> texture = [p.device newBufferWithBytes:bytes.data() length:bytes.size()
+                                                    options:MTLResourceStorageModeShared];
+        id<MTLBuffer> plan = [p.device newBufferWithBytes:words.data()
+                                                    length:words.size() * sizeof(words[0])
+                                                   options:MTLResourceStorageModeShared];
+        if (!texture || !plan) {
+            error = "Cannot allocate one-cycle combiner triangle buffers.";
+            return false;
+        }
+        const auto parameters = makeTriangleColorParameters(triangle);
+        memcpy(p.ram.contents, memory, length);
+        id<MTLCommandBuffer> command = [p.queue commandBuffer];
+        id<MTLComputeCommandEncoder> encoder = [command computeCommandEncoder];
+        if (!command || !encoder) {
+            error = "Cannot create one-cycle combiner triangle command.";
+            return false;
+        }
+        [encoder setComputePipelineState:p.colorTrianglePipeline];
+        [encoder setBuffer:p.ram offset:0 atIndex:0];
+        [encoder setBuffer:plan offset:0 atIndex:1];
+        [encoder setBuffer:texture offset:0 atIndex:2];
+        [encoder setBytes:&parameters length:sizeof(parameters) atIndex:3];
+        [encoder dispatchThreads:MTLSizeMake(words.size(), 1, 1)
+          threadsPerThreadgroup:MTLSizeMake(p.colorTrianglePipeline.threadExecutionWidth, 1, 1)];
         [encoder endEncoding];
         if (!p.finish(command, error)) return false;
         memcpy(memory, p.ram.contents, length);

@@ -55,24 +55,26 @@ indexed formats and filtering remain unsupported.
 Triangle commands snapshot framebuffer, scissor, OtherModes, combiner and
 primitive-color state at issue time. The decoder unpacks RGBA/STW/Z attribute
 origins and X/edge/Y derivatives for all eight payload combinations. The
-production callback accepts two exact direct-color configurations: primitive
-or shade, one-cycle RGBA16 (cycle encoding 0), no texture or Z attributes,
-scissor mode 0, disabled dithering and no blending/depth/AA. It evaluates
-both major-edge orientations and eight staggered coverage samples per pixel,
-retaining fractional scissor bounds. With AA disabled, the first sample
-controls writes; the framebuffer low bit encodes coverage rather than alpha.
-The CPU planner merges all writes to each host word before the Metal kernel.
-For shade mode it also retains each lane's pixel coordinates and scan start;
-the Metal kernel evaluates quantized fixed-point RGB interpolation per lane.
+production callback accepts a restricted one-cycle RGBA16 Combiner subset:
+primitive, shade, point TEXEL0 and shade-times-TEXEL0 output. It requires cycle
+encoding 0, scissor mode 0, disabled dithering, blending, depth, AA and alpha
+compare; unsupported selectors fail closed. It evaluates both major-edge
+orientations and eight staggered coverage samples per pixel, retaining
+fractional scissor bounds. With AA disabled, the first sample controls writes;
+the framebuffer low bit encodes coverage rather than alpha. The CPU planner
+merges all writes to each host word before the Metal kernel. The Metal kernel
+evaluates the shared fixed-point Combiner per lane, including shade
+interpolation, RGBA16 point fetch and the supported selector equation.
 `ShadeMath.h` supplies the same unsigned-wrap arithmetic to C++ diagnostics
 and MSL. The row anchor, edge/Y correction, fractional-X correction, clipped
 X stepping and nine-bit clamp are all exercised against an external renderer,
 not merely against the shared helper.
 Independent CPU tests compare whole RDRAM and written low coverage bits with
-the pinned reference. GPU validation of these changes is still pending.
-The direct RGBA16 TEXEL0 triangle tuple also supports point sampling with
-affine or perspective coordinates, but no shade modulation, Z, LOD, filtering,
-alpha comparison or blending. The decoder snapshots the selected tile's
+the pinned reference, including a shade-times-TEXEL0 fixture. GPU validation of
+the current Combiner path is still pending. The selected RGBA16 TEXEL0 path
+supports point sampling with affine or perspective coordinates, and the
+Combiner can multiply it by interpolated shade. Z, LOD, filtering, alpha
+comparison and blending remain unsupported. The decoder snapshots the selected tile's
 format, stride, base, bounds and addressing modes. A preflight pass rejects
 unmodeled TMEM wrap before dispatch; Metal independently evaluates STW,
 perspective division, coordinate clamp/shift/mask/mirror and TMEM word fetch.
@@ -85,8 +87,9 @@ curve with the independently checked segment-six quantization; no renderer
 lookup table is embedded. Intermediate attribute and divider probes invoke
 the pinned reference's real routines in the separate test executable.
 These stages have CPU evidence and mandatory GPU tests, not a GPU-pass claim.
-Depth interpolation/clamping is diagnostic only. General combiner/blender/
-depth testing, persistent hidden coverage, LOD and filtered VI remain unfinished.
+Depth interpolation/clamping is diagnostic only. General two-cycle combiner,
+blender/depth testing, persistent hidden coverage, LOD and filtered VI remain
+unfinished.
 
 The isolated point-fetch helper also decodes IA8, IA16 and I8 from
 reference-verified TMEM layouts. This is a sampler/test capability only: those

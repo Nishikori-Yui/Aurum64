@@ -4,6 +4,7 @@
 #include "TriangleMode.hpp"
 #include "TrianglePlan.hpp"
 #include "TriangleReference.hpp"
+#include "TriangleColor.hpp"
 #include "TriangleTexture.hpp"
 #include "TriangleTextureDepth.hpp"
 #include <cstdio>
@@ -118,6 +119,19 @@ static void unitTests() {
     require(!isColorTriangle(shadeMode), "Shade alpha compare accepted");
     shadeMode.otherModesLo = 0; shadeMode.otherModesHi = 0;
     require(!isColorTriangle(shadeMode), "Shade dithering accepted");
+    shadeMode.otherModesHi = kFlatPrimitiveModesHi;
+    shadeMode.combineHi = kFlatPrimitiveCombineHi;
+    shadeMode.combineLo = kShadeCombineLo;
+    require(isSimpleCombinerTriangle(shadeMode), "Shade combiner C1 gate");
+    Triangle shadeTextureMode = shadeMode;
+    shadeTextureMode.texture = true;
+    shadeTextureMode.otherModesHi = 0x8f0;
+    shadeTextureMode.combineHi = (1u << 5) | 4u;
+    shadeTextureMode.combineLo = (15u << 24) | (1u << 21) | (4u << 18) |
+        (7u << 6) | (7u << 3) | 7u;
+    shadeTextureMode.primitiveColorValid = false;
+    shadeTextureMode.tileFormat = 0; shadeTextureMode.tileSize = 2;
+    require(isSimpleCombinerTriangle(shadeTextureMode), "Shade-texture combiner C1 gate");
     auto reject = [&](Triangle value) { require(!isFlatPrimitiveTriangle(value), "Invalid mode accepted"); };
     triangle.cycleType = 1; reject(triangle); triangle = valid;
     triangle.otherModesHi = 0x100000; reject(triangle); triangle = valid;
@@ -245,43 +259,37 @@ static void compare(const char* capture, const char* reference) {
     decoder.textureLoad = [&](const TextureLoad& load) { return textures.load(memory.data(), memory.size(), load); };
     size_t draws = 0, pixels = 0, shadedDraws = 0, texturedDraws = 0;
     decoder.triangle = [&](const Triangle& triangle) {
-        const bool textured = isTexturedTriangle(triangle);
-        require(isColorTriangle(triangle) || textured, "Differential fixture mode rejected");
-        if (isShadeTriangle(triangle)) ++shadedDraws;
-        if (textured) ++texturedDraws;
+        const bool simple = isSimpleCombinerTriangle(triangle);
+        require(simple, "Differential fixture mode rejected");
+        if (triangle.shade) ++shadedDraws;
+        if (triangle.texture) ++texturedDraws;
         std::vector<TriangleWord> plan;
-        require(textured ? makeTexturedTrianglePlan(triangle, memory.size(), plan, error) :
-            makeFlatTrianglePlan(triangle, memory.size(), triangle.fbAddress, triangle.fbWidth,
-            triangle.fbSize, primitiveColor16(triangle.primitiveColor), triangle.clipXh,
-            triangle.clipYh, triangle.clipXl, triangle.clipYl, plan, error), error.c_str());
+        require(makeTriangleColorPlan(triangle, memory.size(), plan, error), error.c_str());
         auto oracle = memory;
-        if (!textured) require(drawFlatTriangleReference(oracle.data(), oracle.size(), triangle.fbAddress,
-            triangle.fbWidth, triangle.fbSize, primitiveColor16(triangle.primitiveColor), triangle,
-            triangle.clipXh, triangle.clipYh, triangle.clipXl, triangle.clipYl, error), error.c_str());
         uint32_t previous = 0;
         bool first = true;
-        const auto shade = makeShadeParameters(triangle);
-        const auto tex = makeTriangleTextureParameters(triangle);
+        const auto parameters = makeTriangleColorParameters(triangle);
         for (auto word : plan) {
-            if (isShadeTriangle(triangle)) {
-                if (word.high != UINT32_MAX)
-                    word.high = shadeRGB16(shade, word.highX, word.highY, word.highStart) | (word.high & 1u);
-                if (word.low != UINT32_MAX)
-                    word.low = shadeRGB16(shade, word.lowX, word.lowY, word.lowStart) | (word.low & 1u);
-            }
-            if (textured) {
-                if (word.high != UINT32_MAX)
-                    word.high = (textures.store().readHwWord(triangleTextureIndex(tex, word.highX, word.highY, word.highStart)) & 0xfffeu) | (word.high & 1u);
-                if (word.low != UINT32_MAX)
-                    word.low = (textures.store().readHwWord(triangleTextureIndex(tex, word.lowX, word.lowY, word.lowStart)) & 0xfffeu) | (word.low & 1u);
-            }
+            uint16_t high = word.high, low = word.low;
+            require(triangleColorWord(parameters, triangle.texture ? &textures.store() : nullptr,
+                                       word, high, low), "Scalar combiner evaluation");
+            if (word.high != UINT32_MAX) high = uint16_t((high & 0xfffeu) | (word.high & 1u));
+            if (word.low != UINT32_MAX) low = uint16_t((low & 0xfffeu) | (word.low & 1u));
+            if (word.high != UINT32_MAX) ++pixels;
+            if (word.low != UINT32_MAX) ++pixels;
             require(first || word.word > previous, "Duplicate/out-of-order GPU word ownership");
             first = false; previous = word.word;
-            uint32_t value;
-            require(aurum::memory::readWord(memory.data(), memory.size(), word.word * 4, value), "Plan read");
-            if (word.high != UINT32_MAX) { value = (value & 0xffff) | (word.high << 16); ++pixels; }
-            if (word.low != UINT32_MAX) { value = (value & 0xffff0000) | word.low; ++pixels; }
-            require(aurum::memory::writeWord(memory.data(), memory.size(), word.word * 4, value), "Plan write");
+            const auto apply = [&](std::vector<uint8_t>& target) {
+                uint32_t value;
+                require(aurum::memory::readWord(target.data(), target.size(), word.word * 4, value),
+                        "Plan read");
+                if (word.high != UINT32_MAX) value = (value & 0xffff) | (uint32_t(high) << 16);
+                if (word.low != UINT32_MAX) value = (value & 0xffff0000) | low;
+                require(aurum::memory::writeWord(target.data(), target.size(), word.word * 4, value),
+                        "Plan write");
+            };
+            apply(memory);
+            apply(oracle);
         }
         auto spans = generateTriangleSpans(triangle);
         clipTriangleSpans(spans, triangle.clipXh, triangle.clipYh, triangle.clipXl, triangle.clipYl);
@@ -292,16 +300,6 @@ static void compare(const char* capture, const char* reference) {
                 if (mask & 0x80) {
                     const uint32_t halfword = triangle.fbAddress / 2 + span.y * triangle.fbWidth + x;
                     writtenCoverage[halfword] = uint8_t((std::popcount(mask) - 1) & 3);
-                    if (textured) {
-                        const auto sample = interpolateTextureDepth(triangle, span, x, tex.perspective);
-                        aurum::texture::Texel pixel;
-                        require(aurum::texture::Sampler{}.fetchFixedPoint(textures.store(),
-                            triangleTextureDescriptor(triangle), clampTextureBus(sample.coordinate.s),
-                            clampTextureBus(sample.coordinate.t), pixel), "Scalar textured sample rejected");
-                        const uint16_t rgb = uint16_t(((pixel.r >> 3) << 11) | ((pixel.g >> 3) << 6) | ((pixel.b >> 3) << 1));
-                        require(aurum::memory::writeHalfword(oracle.data(), oracle.size(), halfword * 2,
-                            triangleCoverageColor(rgb, mask)), "Scalar textured triangle write");
-                    }
                 }
             }
         }

@@ -2,7 +2,9 @@
 #include <metal_stdlib>
 using namespace metal;
 #include "ShadeMath.h"
+#include "CombinerMath.h"
 #include "TriangleTextureMath.h"
+#include "TriangleColorMath.h"
 struct Fill { uint address, width, size, color, x0, y0, x1, y1; };
 struct Scanout { uint origin, stride, size, width, height, xScale, yScale, xOffset, yOffset, length; };
 struct CopyWord { uint word, high, low; };
@@ -13,6 +15,45 @@ struct TriangleWord {
 static_assert(sizeof(TriangleWord) == 36);
 static_assert(sizeof(ShadeParameters) == 84);
 static_assert(sizeof(TriangleTextureParameters) == 192);
+static_assert(sizeof(TriangleColorParameters) == 208);
+
+kernel void triangleColor(device uint* ram [[buffer(0)]],
+                          device const TriangleWord* plan [[buffer(1)]],
+                          device const ushort* tmem [[buffer(2)]],
+                          constant TriangleColorParameters& parameters [[buffer(3)]],
+                          uint index [[thread_position_in_grid]]) {
+    TriangleWord item = plan[index];
+    const CombinerColor primitive = primitiveCombinerColor(parameters.primitiveColor);
+    const auto write = [&](int x, int y, int start, uint& destination) {
+        const CombinerColor shade = (parameters.flags & 1u)
+            ? shadeCombinerColor(parameters.texture.setup, x, y, start) : CombinerColor{};
+        CombinerColor texel{};
+        if (parameters.flags & 2u) {
+            const uint source = triangleTextureIndex(parameters.texture, x, y, start);
+            const uint value = uint(tmem[source]);
+            const auto expand = [](uint channel) { return (channel << 3) | (channel >> 2); };
+            texel = {expand((value >> 11) & 31u), expand((value >> 6) & 31u),
+                     expand((value >> 1) & 31u), (value & 1u) ? 255u : 0u};
+        }
+        destination = simpleCombinerRGBA16(parameters.combineHi, parameters.combineLo,
+                                           texel, shade, primitive);
+        return true;
+    };
+    if (item.high != 0xffffffffu) {
+        uint value = 0;
+        write(item.highX, item.highY, item.highStart, value);
+        item.high = value | (item.high & 1u);
+    }
+    if (item.low != 0xffffffffu) {
+        uint value = 0;
+        write(item.lowX, item.lowY, item.lowStart, value);
+        item.low = value | (item.low & 1u);
+    }
+    uint value = ram[item.word];
+    if (item.high != 0xffffffffu) value = (value & 0x0000ffffu) | (item.high << 16);
+    if (item.low != 0xffffffffu) value = (value & 0xffff0000u) | item.low;
+    ram[item.word] = value;
+}
 
 kernel void triangleTexture(device uint* ram [[buffer(0)]],
                             device const TriangleWord* plan [[buffer(1)]],
