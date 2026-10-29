@@ -153,6 +153,28 @@ set_tests_properties(triangle-metal PROPERTIES FIXTURES_REQUIRED triangle-input 
 add_test(NAME triangle-metal-differential COMMAND aurum-reference-diff
     "${TRIANGLE_FIXTURES}/reference" "${TRIANGLE_FIXTURES}/metal" "${TRIANGLE_FIXTURES}/matrix.aurcap")
 set_tests_properties(triangle-metal-differential PROPERTIES FIXTURES_REQUIRED "triangle-reference;triangle-metal")
+add_test(NAME alpha-compare-triangle-generate COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_SOURCE_DIR}/scripts/make_triangle_fixtures.py"
+    "${TRIANGLE_FIXTURES}/alpha-compare.aurcap" --alpha-compare)
+set_tests_properties(alpha-compare-triangle-generate PROPERTIES FIXTURES_SETUP alpha-compare-triangle-input)
+add_test(NAME alpha-compare-triangle-reference COMMAND aurum-angrylion-reference
+    "${TRIANGLE_FIXTURES}/alpha-compare.aurcap" "${TRIANGLE_FIXTURES}/alpha-compare-reference")
+set_tests_properties(alpha-compare-triangle-reference PROPERTIES
+    FIXTURES_REQUIRED alpha-compare-triangle-input FIXTURES_SETUP alpha-compare-triangle-reference)
+add_test(NAME alpha-compare-triangle-differential COMMAND aurum-triangle-tests
+    "${TRIANGLE_FIXTURES}/alpha-compare.aurcap" "${TRIANGLE_FIXTURES}/alpha-compare-reference.rdram")
+set_tests_properties(alpha-compare-triangle-differential PROPERTIES
+    FIXTURES_REQUIRED alpha-compare-triangle-reference)
+add_test(NAME alpha-compare-triangle-metal COMMAND aurum-metal-replay
+    "${TRIANGLE_FIXTURES}/alpha-compare.aurcap" "${TRIANGLE_FIXTURES}/alpha-compare-metal"
+    "${CMAKE_BINARY_DIR}/AurumRDP.metallib")
+set_tests_properties(alpha-compare-triangle-metal PROPERTIES
+    FIXTURES_REQUIRED alpha-compare-triangle-input FIXTURES_SETUP alpha-compare-triangle-metal)
+add_test(NAME alpha-compare-triangle-metal-differential COMMAND aurum-reference-diff
+    "${TRIANGLE_FIXTURES}/alpha-compare-reference" "${TRIANGLE_FIXTURES}/alpha-compare-metal"
+    "${TRIANGLE_FIXTURES}/alpha-compare.aurcap")
+set_tests_properties(alpha-compare-triangle-metal-differential PROPERTIES
+    FIXTURES_REQUIRED "alpha-compare-triangle-reference;alpha-compare-triangle-metal")
 add_test(NAME shade-generate COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_SOURCE_DIR}/scripts/make_triangle_fixtures.py" "${TRIANGLE_FIXTURES}/shade.aurcap" --shaded)
 set_tests_properties(shade-generate PROPERTIES FIXTURES_SETUP shade-input)

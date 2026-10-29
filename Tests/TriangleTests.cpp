@@ -12,6 +12,7 @@
 #include <fstream>
 #include <iterator>
 #include <map>
+#include <set>
 #include <stdexcept>
 
 using namespace aurum::rdp;
@@ -101,10 +102,13 @@ static void unitTests() {
     const uint32_t state[] = {0xff10000f, 0x1000, 0xed000000, 0x400020,
         0xef0000f0, 0, 0xfcffffff, 0xfffdf6fb, 0xfa000000, 0x85432700};
     const uint32_t command[] = {0xc8800010, 0x80000, 8u << 16, 0, 2u << 16, 0, 8u << 16, 0};
+    const uint32_t blend[] = {0x39000000, 0x00000080};
     decoder.push(state);
+    decoder.push(blend);
     for (const auto& word : command) decoder.push(std::span(&word, 1));
     require(triangle.leftMajor && isFlatPrimitiveTriangle(triangle), "Left-major mode decode");
     require(primitiveColor16(triangle.primitiveColor) == 0x8208, "Primitive RGB quantization");
+    require(triangle.blendColorValid && triangle.blendColor == 0x80, "Blend color snapshot");
     const Triangle valid = triangle;
     Triangle shadeMode = triangle;
     shadeMode.shade = true; shadeMode.combineLo = kShadeCombineLo;
@@ -132,6 +136,12 @@ static void unitTests() {
     shadeTextureMode.primitiveColorValid = false;
     shadeTextureMode.tileFormat = 0; shadeTextureMode.tileSize = 2;
     require(isSimpleCombinerTriangle(shadeTextureMode), "Shade-texture combiner C1 gate");
+    Triangle alphaMode = valid;
+    alphaMode.otherModesLo = 1;
+    alphaMode.blendColorValid = true;
+    require(isSimpleCombinerTriangle(alphaMode), "Alpha compare threshold gate");
+    alphaMode.blendColorValid = false;
+    require(!isSimpleCombinerTriangle(alphaMode), "Alpha compare without threshold accepted");
     auto reject = [&](Triangle value) { require(!isFlatPrimitiveTriangle(value), "Invalid mode accepted"); };
     triangle.cycleType = 1; reject(triangle); triangle = valid;
     triangle.otherModesHi = 0x100000; reject(triangle); triangle = valid;
@@ -268,23 +278,33 @@ static void compare(const char* capture, const char* reference) {
         auto oracle = memory;
         uint32_t previous = 0;
         bool first = true;
+        std::set<std::pair<int32_t, int32_t>> acceptedPixels;
         const auto parameters = makeTriangleColorParameters(triangle);
         for (auto word : plan) {
             uint16_t high = word.high, low = word.low;
+            uint32_t writeMask = 0;
             require(triangleColorWord(parameters, triangle.texture ? &textures.store() : nullptr,
-                                       word, high, low), "Scalar combiner evaluation");
-            if (word.high != UINT32_MAX) high = uint16_t((high & 0xfffeu) | (word.high & 1u));
-            if (word.low != UINT32_MAX) low = uint16_t((low & 0xfffeu) | (word.low & 1u));
-            if (word.high != UINT32_MAX) ++pixels;
-            if (word.low != UINT32_MAX) ++pixels;
+                                       word, high, low, writeMask), "Scalar combiner evaluation");
+            const bool highWrite = word.high != UINT32_MAX && (writeMask & 1u);
+            const bool lowWrite = word.low != UINT32_MAX && (writeMask & 2u);
+            if (highWrite) {
+                high = uint16_t((high & 0xfffeu) | (word.high & 1u));
+                acceptedPixels.emplace(word.highX, word.highY);
+                ++pixels;
+            }
+            if (lowWrite) {
+                low = uint16_t((low & 0xfffeu) | (word.low & 1u));
+                acceptedPixels.emplace(word.lowX, word.lowY);
+                ++pixels;
+            }
             require(first || word.word > previous, "Duplicate/out-of-order GPU word ownership");
             first = false; previous = word.word;
             const auto apply = [&](std::vector<uint8_t>& target) {
                 uint32_t value;
                 require(aurum::memory::readWord(target.data(), target.size(), word.word * 4, value),
                         "Plan read");
-                if (word.high != UINT32_MAX) value = (value & 0xffff) | (uint32_t(high) << 16);
-                if (word.low != UINT32_MAX) value = (value & 0xffff0000) | low;
+                if (highWrite) value = (value & 0xffff) | (uint32_t(high) << 16);
+                if (lowWrite) value = (value & 0xffff0000) | low;
                 require(aurum::memory::writeWord(target.data(), target.size(), word.word * 4, value),
                         "Plan write");
             };
@@ -297,7 +317,7 @@ static void compare(const char* capture, const char* reference) {
             if (!span.valid) continue;
             for (int32_t x = span.left; x < span.right; ++x) {
                 const uint8_t mask = trianglePixelCoverage(span, x);
-                if (mask & 0x80) {
+                if ((mask & 0x80) && acceptedPixels.contains({x, span.y})) {
                     const uint32_t halfword = triangle.fbAddress / 2 + span.y * triangle.fbWidth + x;
                     writtenCoverage[halfword] = uint8_t((std::popcount(mask) - 1) & 3);
                 }

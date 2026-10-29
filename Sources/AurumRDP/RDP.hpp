@@ -67,6 +67,8 @@ struct Triangle {
     bool combineValid = false;
     uint32_t primitiveColor = 0;
     bool primitiveColorValid = false;
+    uint32_t blendColor = 0;
+    bool blendColorValid = false;
     std::array<uint32_t, 44> words{};
 };
 struct UnsupportedContext {
@@ -147,6 +149,8 @@ private:
     uint32_t tiFormat = 0, tiSize = 0, tiWidth = 0, tiAddress = 0, zbAddress = 0;
     uint32_t primitiveColor = 0;
     bool primitiveColorValid = false;
+    uint32_t blendColor = 0;
+    bool blendColorValid = false;
     uint32_t combineHi = 0, combineLo = 0;
     bool combineValid = false;
     std::array<uint32_t, 32> tiles{};

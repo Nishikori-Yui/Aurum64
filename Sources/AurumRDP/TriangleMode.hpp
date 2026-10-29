@@ -58,7 +58,8 @@ inline bool isSimpleCombinerTriangle(const Triangle& triangle) {
     const uint32_t expectedModes = triangle.texture ? 0x8f0u : kFlatPrimitiveModesHi;
     return !triangle.z && triangle.cycleType == 0 && triangle.fbFormat == 0 &&
            triangle.fbSize == 2 && triangle.scissorMode == 0 &&
-           modes == expectedModes && triangle.otherModesLo == 0 &&
+           modes == expectedModes && !(triangle.otherModesLo & ~1u) &&
+           (!(triangle.otherModesLo & 1u) || triangle.blendColorValid) &&
            triangle.combineValid &&
            simpleCombinerSupported(triangle.combineHi, triangle.combineLo,
                                    triangle.texture, triangle.shade,

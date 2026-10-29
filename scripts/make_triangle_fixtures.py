@@ -20,7 +20,8 @@ def pack_attributes(channels):
     return words
 
 
-def matrix(memory_bytes=4 << 20, seed=0x7A1A, shaded=False, textured=False):
+def matrix(memory_bytes=4 << 20, seed=0x7A1A, shaded=False, textured=False,
+           alpha_compare=False):
     rng = random.Random(seed)
     records = [initial(memory_bytes), memory(2, 0x200000, b"\x6b\x5a" * (320 * 1024))]
     words = []
@@ -95,7 +96,11 @@ def matrix(memory_bytes=4 << 20, seed=0x7A1A, shaded=False, textured=False):
             origin_s, origin_t = case % 5, case % 7
             words += descriptor + [0xf2000000 | (origin_s << 12) | origin_t,
                                     (tile << 24) | (60 << 12) | 60]
-        words += [0xef000000 | mode, 0, 0xfc000000 | combine_hi, combine,
+        if alpha_compare:
+            threshold = (case * 29 + 37) & 0xff
+            words += [0x39000000, threshold]
+        words += [0xef000000 | mode, 1 if alpha_compare else 0,
+                  0xfc000000 | combine_hi, combine,
                   0xfa000000, color]
         if textured and shaded:
             triangle_opcode = 0xce000000 | (tile << 16)
@@ -147,7 +152,11 @@ if __name__ == "__main__":
     parser.add_argument("seed", type=int, nargs="?", default=0x7A1A)
     parser.add_argument("--shaded", action="store_true")
     parser.add_argument("--textured", action="store_true")
+    parser.add_argument("--alpha-compare", action="store_true")
     args = parser.parse_args()
     destination = args.destination
     destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_bytes(matrix(args.memory, args.seed, args.shaded, args.textured))
+    if args.alpha_compare and (args.shaded or args.textured):
+        parser.error("--alpha-compare is currently limited to primitive-color fixtures")
+    destination.write_bytes(matrix(args.memory, args.seed, args.shaded, args.textured,
+                                   args.alpha_compare))

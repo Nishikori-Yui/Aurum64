@@ -583,8 +583,8 @@ The production triangle callback now routes a restricted one-cycle RGBA16
 Combiner through a shared CPU/MSL parameter block. Supported output sources are
 primitive color, interpolated shade, point-sampled RGBA16 TEXEL0 and
 shade-times-TEXEL0. Selector validation rejects unsupported sources before any
-framebuffer write; two-cycle, blender, depth, AA, dithering and alpha-compare
-states remain rejected.
+framebuffer write; two-cycle, blender, depth, AA and dithering remain rejected.
+The deterministic threshold alpha-compare slice is documented below.
 
 The new 320-case shade-times-TEXEL0 fixture covers both major-edge directions,
 fractional coordinates, clipping, tile origins, affine/perspective W, varying
@@ -599,3 +599,20 @@ mode. The current environment has no Metal device, so GPU execution is still
 pending and is not reported as passed. This completes an M6 C1 implementation
 slice; alpha/dither, two-cycle, depth, blender and persistent hidden coverage
 remain future slices.
+
+# Single-cycle alpha compare - 2026-10-29
+
+`SetBlendColor` is now captured at triangle issue time. The single-cycle
+Combiner accepts `alpha_compare_en` when `dither_alpha_en` is clear and uses
+the captured blend alpha as a deterministic threshold. Pixels below the
+threshold are rejected before the host-word write; accepted pixels retain the
+existing RGBA16 coverage low-bit behavior. Random alpha dither, blending,
+depth and two-cycle modes remain rejected.
+
+The new 320-case primitive-color fixture varies the source alpha and threshold
+and compares whole RDRAM plus the written hidden coverage bytes against the
+separate reference process. Decoder state, missing-threshold rejection and
+accepted/rejected pixel ownership are covered by unit and differential tests.
+The production Metal kernel contains the same threshold decision. Its runtime
+and Metal differential tests are present in CTest but remain unavailable in
+the current no-device environment.

@@ -15,7 +15,7 @@ struct TriangleWord {
 static_assert(sizeof(TriangleWord) == 36);
 static_assert(sizeof(ShadeParameters) == 84);
 static_assert(sizeof(TriangleTextureParameters) == 192);
-static_assert(sizeof(TriangleColorParameters) == 208);
+static_assert(sizeof(TriangleColorParameters) == 212);
 
 kernel void triangleColor(device uint* ram [[buffer(0)]],
                           device const TriangleWord* plan [[buffer(1)]],
@@ -35,19 +35,25 @@ kernel void triangleColor(device uint* ram [[buffer(0)]],
             texel = {expand((value >> 11) & 31u), expand((value >> 6) & 31u),
                      expand((value >> 1) & 31u), (value & 1u) ? 255u : 0u};
         }
-        destination = simpleCombinerRGBA16(parameters.combineHi, parameters.combineLo,
-                                           texel, shade, primitive);
+        const CombinerColor color = simpleCombinerColor(parameters.combineHi, parameters.combineLo,
+                                                        texel, shade, primitive);
+        if ((parameters.flags & 4u) && color.a < (parameters.blendColor & 0xffu)) return false;
+        destination = ((color.r >> 3) << 11) | ((color.g >> 3) << 6) | ((color.b >> 3) << 1);
         return true;
     };
     if (item.high != 0xffffffffu) {
         uint value = 0;
-        write(item.highX, item.highY, item.highStart, value);
-        item.high = value | (item.high & 1u);
+        if (write(item.highX, item.highY, item.highStart, value))
+            item.high = value | (item.high & 1u);
+        else
+            item.high = 0xffffffffu;
     }
     if (item.low != 0xffffffffu) {
         uint value = 0;
-        write(item.lowX, item.lowY, item.lowStart, value);
-        item.low = value | (item.low & 1u);
+        if (write(item.lowX, item.lowY, item.lowStart, value))
+            item.low = value | (item.low & 1u);
+        else
+            item.low = 0xffffffffu;
     }
     uint value = ram[item.word];
     if (item.high != 0xffffffffu) value = (value & 0x0000ffffu) | (item.high << 16);

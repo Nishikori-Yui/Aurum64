@@ -25,7 +25,9 @@ inline TriangleColorParameters makeTriangleColorParameters(const Triangle& trian
     result.combineHi = triangle.combineHi;
     result.combineLo = triangle.combineLo;
     result.primitiveColor = triangle.primitiveColor;
-    result.flags = (triangle.shade ? 1u : 0u) | (triangle.texture ? 2u : 0u);
+    result.blendColor = triangle.blendColor;
+    result.flags = (triangle.shade ? 1u : 0u) | (triangle.texture ? 2u : 0u) |
+        ((triangle.otherModesLo & 1u) ? 4u : 0u);
     return result;
 }
 
@@ -70,21 +72,35 @@ inline bool sampleTriangleTexel(const TriangleColorParameters& parameters,
 
 inline bool triangleColorWord(const TriangleColorParameters& parameters,
                               const aurum::tmem::Store* tmem,
-                              const TriangleWord& word, uint16_t& high, uint16_t& low) {
+                              const TriangleWord& word, uint16_t& high, uint16_t& low,
+                              uint32_t& writeMask) {
+    writeMask = 0;
     const CombinerColor primitive = primitiveCombinerColor(parameters.primitiveColor);
-    const auto write = [&](int32_t x, int32_t y, int32_t start, uint16_t& destination) {
+    const auto write = [&](int32_t x, int32_t y, int32_t start,
+                           uint16_t& destination, uint32_t bit) {
         const CombinerColor shade = (parameters.flags & 1u)
             ? shadeCombinerColor(parameters.texture.setup, x, y, start) : CombinerColor{};
         CombinerColor texel{};
         if (parameters.flags & 2u) {
             if (!tmem || !sampleTriangleTexel(parameters, *tmem, x, y, start, texel)) return false;
         }
-        destination = simpleCombinerRGBA16(parameters.combineHi, parameters.combineLo,
-                                           texel, shade, primitive);
+        const CombinerColor color = simpleCombinerColor(parameters.combineHi, parameters.combineLo,
+                                                        texel, shade, primitive);
+        if ((parameters.flags & 4u) && color.a < (parameters.blendColor & 0xffu)) return true;
+        destination = uint16_t(((color.r >> 3) << 11) | ((color.g >> 3) << 6) |
+                               ((color.b >> 3) << 1));
+        writeMask |= bit;
         return true;
     };
-    if (word.high != UINT32_MAX && !write(word.highX, word.highY, word.highStart, high)) return false;
-    if (word.low != UINT32_MAX && !write(word.lowX, word.lowY, word.lowStart, low)) return false;
+    if (word.high != UINT32_MAX && !write(word.highX, word.highY, word.highStart, high, 1u)) return false;
+    if (word.low != UINT32_MAX && !write(word.lowX, word.lowY, word.lowStart, low, 2u)) return false;
     return true;
+}
+
+inline bool triangleColorWord(const TriangleColorParameters& parameters,
+                              const aurum::tmem::Store* tmem,
+                              const TriangleWord& word, uint16_t& high, uint16_t& low) {
+    uint32_t writeMask = 0;
+    return triangleColorWord(parameters, tmem, word, high, low, writeMask);
 }
 } // namespace aurum::rdp

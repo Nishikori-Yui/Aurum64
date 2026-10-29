@@ -57,8 +57,9 @@ primitive-color state at issue time. The decoder unpacks RGBA/STW/Z attribute
 origins and X/edge/Y derivatives for all eight payload combinations. The
 production callback accepts a restricted one-cycle RGBA16 Combiner subset:
 primitive, shade, point TEXEL0 and shade-times-TEXEL0 output. It requires cycle
-encoding 0, scissor mode 0, disabled dithering, blending, depth, AA and alpha
-compare; unsupported selectors fail closed. It evaluates both major-edge
+encoding 0, scissor mode 0, disabled dithering, blending, depth and AA. A
+deterministic threshold alpha compare using SetBlendColor is supported; random
+alpha dither remains rejected. Unsupported selectors fail closed. It evaluates both major-edge
 orientations and eight staggered coverage samples per pixel, retaining
 fractional scissor bounds. With AA disabled, the first sample controls writes;
 the framebuffer low bit encodes coverage rather than alpha. The CPU planner
@@ -74,7 +75,8 @@ the pinned reference, including a shade-times-TEXEL0 fixture. GPU validation of
 the current Combiner path is still pending. The selected RGBA16 TEXEL0 path
 supports point sampling with affine or perspective coordinates, and the
 Combiner can multiply it by interpolated shade. Z, LOD, filtering, alpha
-comparison and blending remain unsupported. The decoder snapshots the selected tile's
+comparison with random dither and blending remain unsupported. The decoder
+snapshots the selected tile's
 format, stride, base, bounds and addressing modes. A preflight pass rejects
 unmodeled TMEM wrap before dispatch; Metal independently evaluates STW,
 perspective division, coordinate clamp/shift/mask/mirror and TMEM word fetch.

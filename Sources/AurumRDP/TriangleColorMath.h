@@ -7,9 +7,9 @@
 
 struct TriangleColorParameters {
     TriangleTextureParameters texture;
-    ShadeUInt combineHi = 0, combineLo = 0, primitiveColor = 0, flags = 0;
+    ShadeUInt combineHi = 0, combineLo = 0, primitiveColor = 0, blendColor = 0, flags = 0;
 };
-static_assert(sizeof(TriangleColorParameters) == 208);
+static_assert(sizeof(TriangleColorParameters) == 212);
 
 inline CombinerColor primitiveCombinerColor(ShadeUInt value) {
     return {(value >> 24) & 0xffu, (value >> 16) & 0xffu,

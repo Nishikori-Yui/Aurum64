@@ -113,6 +113,8 @@ void Decoder::reset() {
     tiFormat = tiSize = tiWidth = tiAddress = zbAddress = 0;
     primitiveColor = 0;
     primitiveColorValid = false;
+    blendColor = 0;
+    blendColorValid = false;
     combineHi = combineLo = 0;
     combineValid = false;
     tiles.fill(0);
@@ -196,6 +198,10 @@ void Decoder::execute(std::span<const uint32_t> w) {
     case 0x3a:
         primitiveColor = b;
         primitiveColorValid = true;
+        break;
+    case 0x39:
+        blendColor = b;
+        blendColorValid = true;
         break;
     case 0x3c:
         combineHi = a & 0x00ffffffu;
@@ -309,6 +315,8 @@ void Decoder::execute(std::span<const uint32_t> w) {
         triangle.combineValid = combineValid;
         triangle.primitiveColor = primitiveColor;
         triangle.primitiveColorValid = primitiveColorValid;
+        triangle.blendColor = blendColor;
+        triangle.blendColorValid = blendColorValid;
         if (!this->triangle || !this->triangle(triangle)) markUnsupported(w);
         break;
     }

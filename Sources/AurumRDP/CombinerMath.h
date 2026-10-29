@@ -181,9 +181,9 @@ inline bool simpleCombinerSupported(ShadeUInt hi, ShadeUInt lo, bool hasTexture,
            combinerAlphaSourceSupported(dAlpha, hasTexture, hasShade, hasPrimitive);
 }
 
-inline ShadeUInt simpleCombinerRGBA16(ShadeUInt hi, ShadeUInt lo,
-                                      CombinerColor texel, CombinerColor shade,
-                                      CombinerColor primitive) {
+inline CombinerColor simpleCombinerColor(ShadeUInt hi, ShadeUInt lo,
+                                         CombinerColor texel, CombinerColor shade,
+                                         CombinerColor primitive) {
     const CombinerColor combined{};
     const ShadeUInt aRGB = hi >> 5;
     const ShadeUInt cRGB = hi & 0x1fu;
@@ -210,6 +210,12 @@ inline ShadeUInt simpleCombinerRGBA16(ShadeUInt hi, ShadeUInt lo,
                                       combinerAlphaSource(bAlpha, combined, texel, shade, primitive),
                                       combinerAlphaMultiplier(cAlpha, combined, texel, shade, primitive),
                                       combinerAlphaSource(dAlpha, combined, texel, shade, primitive));
-    return uint16_t(((result.r >> 3) << 11) | ((result.g >> 3) << 6) |
-                    ((result.b >> 3) << 1));
+    return result;
+}
+
+inline ShadeUInt simpleCombinerRGBA16(ShadeUInt hi, ShadeUInt lo,
+                                      CombinerColor texel, CombinerColor shade,
+                                      CombinerColor primitive) {
+    const CombinerColor result = simpleCombinerColor(hi, lo, texel, shade, primitive);
+    return ((result.r >> 3) << 11) | ((result.g >> 3) << 6) | ((result.b >> 3) << 1);
 }

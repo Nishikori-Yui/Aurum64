@@ -13,10 +13,11 @@ variants are rejected. The renderer also has basic VI scanout. TMEM uploads and
 signed point/copy coordinates have independent reference tests. Strictly gated
 one-cycle RGBA16 triangle modes now share a Combiner path for primitive,
 interpolated shade, point TEXEL0 and shade-times-TEXEL0 output, including
-affine/perspective texture coordinates. Their CPU evaluation has independent
-reference tests; GPU validation is pending. Z-tested triangles, additional
-combiner modes, filtered textures, blender, depth, coverage and accurate VI
-filters remain unfinished. The CPU uses the cached
+affine/perspective texture coordinates and threshold alpha compare without
+random dither. Their CPU evaluation has independent reference tests; GPU
+validation is pending. Z-tested triangles, additional combiner modes, filtered
+textures, blender, depth, coverage and accurate VI filters remain unfinished.
+The CPU uses the cached
 interpreter, not a JIT.
 There is no claim of real-time performance or commercial-game compatibility.
 
@@ -62,8 +63,9 @@ core but game-driven persistence still needs validation.
   byte-address reference, 391 original RGBA16/CI4/CI8 copy draws compared with a
   separate pinned reference process, VI color conversion/blanking and offscreen presentation.
 - CPU triangle differential: flat, shade, point TEXEL0 and shade-times-TEXEL0
-  one-cycle RGBA16 fixtures compare whole RDRAM and written coverage against
-  the separate reference process; Metal replay remains a required GPU check.
+  one-cycle RGBA16 fixtures, plus threshold alpha-compare cases, compare whole
+  RDRAM and written coverage against the separate reference process; Metal
+  replay remains a required GPU check.
 - Original generated ROM: CPU boot without proprietary IPL3, RDP DMA, Metal
   rendering, a small scalar RSP program, silent AI DMA and exact full-frame pixels.
   Texture variants also exercise production LoadTile, RGBA16 TLUT upload, CI8
