@@ -35,10 +35,11 @@ target_link_libraries(aurum-video PRIVATE aurum-dpc)
 target_link_libraries(aurum-video PRIVATE aurum-rdp)
 target_link_libraries(aurum-audio PRIVATE "-framework AudioToolbox")
 add_custom_command(OUTPUT AurumRDP.metallib
-    COMMAND xcrun -sdk macosx metal -c "${CMAKE_SOURCE_DIR}/Sources/AurumRDP/RDP.metal" -o AurumRDP.air
-    COMMAND xcrun -sdk macosx metal -c "${CMAKE_SOURCE_DIR}/Sources/AurumRDP/Presentation.metal" -o Presentation.air
+    COMMAND xcrun -sdk macosx metal "-fmodules-cache-path=${CMAKE_BINARY_DIR}/metal-module-cache" -c "${CMAKE_SOURCE_DIR}/Sources/AurumRDP/RDP.metal" -o AurumRDP.air
+    COMMAND xcrun -sdk macosx metal "-fmodules-cache-path=${CMAKE_BINARY_DIR}/metal-module-cache" -c "${CMAKE_SOURCE_DIR}/Sources/AurumRDP/Presentation.metal" -o Presentation.air
     COMMAND xcrun -sdk macosx metallib AurumRDP.air Presentation.air -o AurumRDP.metallib
-    DEPENDS Sources/AurumRDP/RDP.metal Sources/AurumRDP/Presentation.metal VERBATIM)
+    DEPENDS Sources/AurumRDP/RDP.metal Sources/AurumRDP/ShadeMath.h Sources/AurumRDP/Presentation.metal
+        Sources/AurumRDP/TriangleTextureMath.h Sources/AurumRDP/PerspectiveMath.h Sources/AurumRDP/TextureDepthMath.h VERBATIM)
 add_custom_target(shaders ALL DEPENDS AurumRDP.metallib)
 add_executable(aurum-rdp-tests Tests/RDPTests.cpp)
 target_link_libraries(aurum-rdp-tests PRIVATE aurum-rdp)
@@ -90,6 +91,96 @@ set_tests_properties(texture-coordinates-reference PROPERTIES FIXTURES_REQUIRED 
 add_test(NAME texture-coordinates COMMAND aurum-texture-coordinate-tests --compare "${COORDINATE_CASES}" "${COORDINATE_REFERENCE}")
 set_tests_properties(texture-coordinates PROPERTIES FIXTURES_REQUIRED coordinate-reference)
 add_test(NAME rdp COMMAND aurum-rdp-tests "${CMAKE_BINARY_DIR}/AurumRDP.metallib")
+add_executable(aurum-triangle-tests Tests/TriangleTests.cpp)
+target_link_libraries(aurum-triangle-tests PRIVATE aurum-capture aurum-rdp-decode)
+add_test(NAME triangle-unit COMMAND aurum-triangle-tests)
+add_executable(aurum-attribute-tests Tests/AttributeTests.cpp)
+target_link_libraries(aurum-attribute-tests PRIVATE aurum-rdp-decode)
+set(ATTRIBUTE_FIXTURES "${CMAKE_BINARY_DIR}/attribute-tests")
+add_test(NAME attributes-generate COMMAND aurum-attribute-tests --generate "${ATTRIBUTE_FIXTURES}/cases.bin")
+set_tests_properties(attributes-generate PROPERTIES FIXTURES_SETUP attribute-input)
+add_test(NAME attributes-reference COMMAND aurum-angrylion-reference --triangle-attributes
+    "${ATTRIBUTE_FIXTURES}/cases.bin" "${ATTRIBUTE_FIXTURES}/reference.bin")
+set_tests_properties(attributes-reference PROPERTIES FIXTURES_REQUIRED attribute-input FIXTURES_SETUP attribute-reference)
+add_test(NAME attributes-differential COMMAND aurum-attribute-tests --compare
+    "${ATTRIBUTE_FIXTURES}/cases.bin" "${ATTRIBUTE_FIXTURES}/reference.bin")
+set_tests_properties(attributes-differential PROPERTIES FIXTURES_REQUIRED attribute-reference)
+add_executable(aurum-perspective-tests Tests/PerspectiveTests.cpp)
+target_include_directories(aurum-perspective-tests PRIVATE Sources/AurumRDP)
+set(PERSPECTIVE_FIXTURES "${CMAKE_BINARY_DIR}/perspective-tests")
+add_test(NAME perspective-generate COMMAND aurum-perspective-tests --generate "${PERSPECTIVE_FIXTURES}/cases.bin")
+set_tests_properties(perspective-generate PROPERTIES FIXTURES_SETUP perspective-input)
+add_test(NAME perspective-reference COMMAND aurum-angrylion-reference --perspective
+    "${PERSPECTIVE_FIXTURES}/cases.bin" "${PERSPECTIVE_FIXTURES}/reference.bin")
+set_tests_properties(perspective-reference PROPERTIES FIXTURES_REQUIRED perspective-input FIXTURES_SETUP perspective-reference)
+add_test(NAME perspective-differential COMMAND aurum-perspective-tests --compare
+    "${PERSPECTIVE_FIXTURES}/cases.bin" "${PERSPECTIVE_FIXTURES}/reference.bin")
+set_tests_properties(perspective-differential PROPERTIES FIXTURES_REQUIRED perspective-reference)
+add_custom_command(OUTPUT StageMath.metallib
+    COMMAND xcrun -sdk macosx metal "-fmodules-cache-path=${CMAKE_BINARY_DIR}/metal-module-cache"
+        "-I${CMAKE_SOURCE_DIR}/Sources/AurumRDP" -c "${CMAKE_SOURCE_DIR}/Tests/StageMath.metal" -o StageMath.air
+    COMMAND xcrun -sdk macosx metallib StageMath.air -o StageMath.metallib
+    DEPENDS Tests/StageMath.metal Sources/AurumRDP/ShadeMath.h
+        Sources/AurumRDP/TextureDepthMath.h Sources/AurumRDP/PerspectiveMath.h VERBATIM)
+add_custom_target(stage-shaders ALL DEPENDS StageMath.metallib)
+add_executable(aurum-stage-metal-tests Tests/StageMathTests.mm)
+target_include_directories(aurum-stage-metal-tests PRIVATE Sources/AurumRDP)
+target_compile_options(aurum-stage-metal-tests PRIVATE -fobjc-arc)
+target_link_libraries(aurum-stage-metal-tests PRIVATE "-framework Metal" "-framework Foundation")
+add_dependencies(aurum-stage-metal-tests stage-shaders)
+add_test(NAME perspective-metal COMMAND aurum-stage-metal-tests "${CMAKE_BINARY_DIR}/StageMath.metallib"
+    "${PERSPECTIVE_FIXTURES}/cases.bin" "${PERSPECTIVE_FIXTURES}/reference.bin")
+set_tests_properties(perspective-metal PROPERTIES FIXTURES_REQUIRED perspective-reference)
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_test(NAME stage-probe-negative COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_SOURCE_DIR}/Tests/probe_negative.py" "${CMAKE_BINARY_DIR}")
+set_tests_properties(stage-probe-negative PROPERTIES FIXTURES_REQUIRED "attribute-reference;perspective-reference")
+set(TRIANGLE_FIXTURES "${CMAKE_BINARY_DIR}/triangle-tests")
+add_test(NAME triangle-generate COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_SOURCE_DIR}/scripts/make_triangle_fixtures.py" "${TRIANGLE_FIXTURES}/matrix.aurcap")
+set_tests_properties(triangle-generate PROPERTIES FIXTURES_SETUP triangle-input)
+add_test(NAME triangle-reference COMMAND aurum-angrylion-reference
+    "${TRIANGLE_FIXTURES}/matrix.aurcap" "${TRIANGLE_FIXTURES}/reference")
+set_tests_properties(triangle-reference PROPERTIES FIXTURES_REQUIRED triangle-input FIXTURES_SETUP triangle-reference)
+add_test(NAME triangle-differential COMMAND aurum-triangle-tests
+    "${TRIANGLE_FIXTURES}/matrix.aurcap" "${TRIANGLE_FIXTURES}/reference.rdram")
+set_tests_properties(triangle-differential PROPERTIES FIXTURES_REQUIRED triangle-reference)
+add_test(NAME triangle-metal COMMAND aurum-metal-replay
+    "${TRIANGLE_FIXTURES}/matrix.aurcap" "${TRIANGLE_FIXTURES}/metal" "${CMAKE_BINARY_DIR}/AurumRDP.metallib")
+set_tests_properties(triangle-metal PROPERTIES FIXTURES_REQUIRED triangle-input FIXTURES_SETUP triangle-metal)
+add_test(NAME triangle-metal-differential COMMAND aurum-reference-diff
+    "${TRIANGLE_FIXTURES}/reference" "${TRIANGLE_FIXTURES}/metal" "${TRIANGLE_FIXTURES}/matrix.aurcap")
+set_tests_properties(triangle-metal-differential PROPERTIES FIXTURES_REQUIRED "triangle-reference;triangle-metal")
+add_test(NAME shade-generate COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_SOURCE_DIR}/scripts/make_triangle_fixtures.py" "${TRIANGLE_FIXTURES}/shade.aurcap" --shaded)
+set_tests_properties(shade-generate PROPERTIES FIXTURES_SETUP shade-input)
+add_test(NAME shade-reference COMMAND aurum-angrylion-reference
+    "${TRIANGLE_FIXTURES}/shade.aurcap" "${TRIANGLE_FIXTURES}/shade-reference")
+set_tests_properties(shade-reference PROPERTIES FIXTURES_REQUIRED shade-input FIXTURES_SETUP shade-reference)
+add_test(NAME shade-differential COMMAND aurum-triangle-tests
+    "${TRIANGLE_FIXTURES}/shade.aurcap" "${TRIANGLE_FIXTURES}/shade-reference.rdram")
+set_tests_properties(shade-differential PROPERTIES FIXTURES_REQUIRED shade-reference)
+add_test(NAME shade-metal COMMAND aurum-metal-replay
+    "${TRIANGLE_FIXTURES}/shade.aurcap" "${TRIANGLE_FIXTURES}/shade-metal" "${CMAKE_BINARY_DIR}/AurumRDP.metallib")
+set_tests_properties(shade-metal PROPERTIES FIXTURES_REQUIRED shade-input FIXTURES_SETUP shade-metal)
+add_test(NAME shade-metal-differential COMMAND aurum-reference-diff
+    "${TRIANGLE_FIXTURES}/shade-reference" "${TRIANGLE_FIXTURES}/shade-metal" "${TRIANGLE_FIXTURES}/shade.aurcap")
+set_tests_properties(shade-metal-differential PROPERTIES FIXTURES_REQUIRED "shade-reference;shade-metal")
+add_test(NAME textured-triangle-generate COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_SOURCE_DIR}/scripts/make_triangle_fixtures.py" "${TRIANGLE_FIXTURES}/textured.aurcap" --textured)
+set_tests_properties(textured-triangle-generate PROPERTIES FIXTURES_SETUP textured-triangle-input)
+add_test(NAME textured-triangle-reference COMMAND aurum-angrylion-reference
+    "${TRIANGLE_FIXTURES}/textured.aurcap" "${TRIANGLE_FIXTURES}/textured-reference")
+set_tests_properties(textured-triangle-reference PROPERTIES FIXTURES_REQUIRED textured-triangle-input FIXTURES_SETUP textured-triangle-reference)
+add_test(NAME textured-triangle-differential COMMAND aurum-triangle-tests
+    "${TRIANGLE_FIXTURES}/textured.aurcap" "${TRIANGLE_FIXTURES}/textured-reference.rdram")
+set_tests_properties(textured-triangle-differential PROPERTIES FIXTURES_REQUIRED textured-triangle-reference)
+add_test(NAME textured-triangle-metal COMMAND aurum-metal-replay
+    "${TRIANGLE_FIXTURES}/textured.aurcap" "${TRIANGLE_FIXTURES}/textured-metal" "${CMAKE_BINARY_DIR}/AurumRDP.metallib")
+set_tests_properties(textured-triangle-metal PROPERTIES FIXTURES_REQUIRED textured-triangle-input FIXTURES_SETUP textured-triangle-metal)
+add_test(NAME textured-triangle-metal-differential COMMAND aurum-reference-diff
+    "${TRIANGLE_FIXTURES}/textured-reference" "${TRIANGLE_FIXTURES}/textured-metal" "${TRIANGLE_FIXTURES}/textured.aurcap")
+set_tests_properties(textured-triangle-metal-differential PROPERTIES FIXTURES_REQUIRED "textured-triangle-reference;textured-triangle-metal")
 add_executable(aurum-texture-copy-tests Tests/TextureCopyTests.cpp)
 target_link_libraries(aurum-texture-copy-tests PRIVATE aurum-rdp)
 add_dependencies(aurum-texture-copy-tests shaders)

@@ -72,6 +72,13 @@ excluded from the production app.
 
 ## Evaluated alternatives
 
+The triangle-stage adapters call the pinned reference's triangle handlers,
+export its real span registers and invoke its TC divider. These development
+probes are not part of the application. Production attribute/texture math is
+independently implemented and checked via neutral binary input/output; the
+reciprocal segments are generated arithmetically rather than copying an
+upstream table. Passing the reference tests is not a claim of hardware truth.
+
 - [paraLLEl-RDP](https://github.com/Themaister/parallel-rdp): MIT/Vulkan compute
   with MIT Granite and MAME Angrylion submodules; see the exact pins above.
   Appropriate architecture reference and future differential-test target. No

@@ -10,9 +10,11 @@ RGBA16/CI4/CI8 copy-cycle texture rectangles with RGBA16 TLUT, IA16 copy
 rectangles, and a narrower IA8/I8 copy envelope with zero S/T origin, unit
 derivatives, no flip and default tile addressing. Unsupported IA8/I8 address
 variants are rejected. The renderer also has basic VI scanout. TMEM uploads and
-signed point/copy coordinates have independent reference tests. One strictly
-gated flat primitive-color RGBA16 triangle mode is wired through Metal; general
-triangle attributes, other combiner modes, filtered textures, blender, depth,
+signed point/copy coordinates have independent reference tests. Strictly gated
+primitive-color, interpolated shade and RGBA16 point-textured triangle modes
+are wired through Metal, including affine/perspective texture coordinates.
+Their CPU evaluation has independent reference tests; GPU validation is
+pending. Z-tested triangles, other combiner modes, filtered textures, blender, depth,
 coverage and accurate VI filters remain unfinished. The CPU uses the cached
 interpreter, not a JIT.
 There is no claim of real-time performance or commercial-game compatibility.

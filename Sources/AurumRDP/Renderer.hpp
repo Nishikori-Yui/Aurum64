@@ -17,6 +17,10 @@ public:
     bool fill(uint8_t* memory, size_t length, const Fill& fill, std::string& error);
     bool textureCopy(uint8_t* memory, size_t length, const TextureRect& rect,
                      const aurum::tmem::Store& tmem, std::string& error);
+    bool texturedTriangle(uint8_t* memory, size_t length, const Triangle& triangle,
+                          const aurum::tmem::Store& tmem, std::string& error);
+    // Scissor arguments retain the RDP's raw 10.2 fixed-point coordinates.
+    // Direct-shade mode evaluates attributes in Metal; otherwise uses color.
     bool flatTriangle(uint8_t* memory, size_t length, uint32_t framebufferAddress,
                       uint32_t framebufferWidth, uint32_t framebufferSize,
                       uint16_t color, const Triangle& triangle,

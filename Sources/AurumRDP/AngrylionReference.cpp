@@ -2,6 +2,8 @@
 #include "AngrylionExports.h"
 #include "Capture.hpp"
 #include "TextureCoordinateProbe.hpp"
+#include "AttributeProbe.hpp"
+#include "PerspectiveProbe.hpp"
 
 extern "C" {
 #include <core/n64video.h>
@@ -243,6 +245,62 @@ struct Session {
 } // namespace
 
 int main(int argc, char** argv) {
+    if (argc == 4 && std::string(argv[1]) == "--perspective") {
+        try {
+            using namespace aurum::perspective_probe;
+            std::ifstream input(argv[2], std::ios::binary);
+            std::ofstream output(argv[3], std::ios::binary | std::ios::trunc);
+            readMagic(input, kInputMagic); writeMagic(output, kOutputMagic);
+            n64video_perspective_probe_init();
+            Request request;
+            size_t count = 0;
+            while (readWords(input, request)) {
+                require(++count <= kMaxCases && request[0] <= 1, "Invalid perspective probe request.");
+                Response response;
+                n64video_perspective_probe(request.data(), response.data());
+                writeWords(output, response);
+            }
+            require(count, "Empty perspective probe.");
+            output.flush(); require(bool(output), "Cannot finish perspective probe.");
+            std::printf("Reference: %zu perspective/affine probes\n", count);
+            return 0;
+        } catch (const std::exception& error) {
+            std::fprintf(stderr, "aborted: %s\n", error.what()); return 1;
+        }
+    }
+    if (argc == 4 && std::string(argv[1]) == "--triangle-attributes") {
+        try {
+            using namespace aurum::attribute_probe;
+            std::ifstream input(argv[2], std::ios::binary);
+            std::ofstream output(argv[3], std::ios::binary | std::ios::trunc);
+            readMagic(input, kInputMagic);
+            writeMagic(output, kOutputMagic);
+            Session session(4 << 20);
+            session.configure();
+            Request request;
+            size_t count = 0;
+            while (readWords(input, request)) {
+                require(++count <= kMaxCases, "Too many attribute probes.");
+                const uint32_t opcode = (request[0] >> 24) & 63;
+                require(opcode >= 8 && opcode <= 15 && request[46] < 1024 &&
+                        (request[44] >> 24) == 0xed && !(request[45] & 0xff000000u),
+                        "Invalid attribute probe request.");
+                require(((request[44] >> 12) & 4095) <= ((request[45] >> 12) & 4095) &&
+                        (request[44] & 4095) <= (request[45] & 4095), "Invalid attribute probe scissor.");
+                Response response{};
+                n64video_attribute_probe(request.data(), response.data());
+                writeWords(output, response);
+            }
+            require(count != 0, "Empty attribute probe.");
+            output.flush();
+            require(bool(output), "Cannot finish attribute probe.");
+            std::printf("Reference: %zu triangle attribute probes\n", count);
+            return 0;
+        } catch (const std::exception& error) {
+            std::fprintf(stderr, "aborted: %s\n", error.what());
+            return 1;
+        }
+    }
     if (argc == 4 && std::string(argv[1]) == "--texture-coordinates") {
         try {
             using namespace aurum::coordinate_probe;

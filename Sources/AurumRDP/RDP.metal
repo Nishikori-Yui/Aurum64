@@ -1,15 +1,51 @@
 // SPDX-License-Identifier: MIT
 #include <metal_stdlib>
 using namespace metal;
+#include "ShadeMath.h"
+#include "TriangleTextureMath.h"
 struct Fill { uint address, width, size, color, x0, y0, x1, y1; };
 struct Scanout { uint origin, stride, size, width, height, xScale, yScale, xOffset, yOffset, length; };
 struct CopyWord { uint word, high, low; };
-struct TriangleWord { uint word, high, low; };
+struct TriangleWord {
+    uint word, high, low;
+    int highX, highY, highStart, lowX, lowY, lowStart;
+};
+static_assert(sizeof(TriangleWord) == 36);
+static_assert(sizeof(ShadeParameters) == 84);
+static_assert(sizeof(TriangleTextureParameters) == 192);
+
+kernel void triangleTexture(device uint* ram [[buffer(0)]],
+                            device const TriangleWord* plan [[buffer(1)]],
+                            device const ushort* tmem [[buffer(2)]],
+                            constant TriangleTextureParameters& parameters [[buffer(3)]],
+                            uint index [[thread_position_in_grid]]) {
+    TriangleWord item = plan[index];
+    if (item.high != 0xffffffffu) {
+        const uint source = triangleTextureIndex(parameters, item.highX, item.highY, item.highStart);
+        item.high = (uint(tmem[source]) & 0xfffeu) | (item.high & 1u);
+    }
+    if (item.low != 0xffffffffu) {
+        const uint source = triangleTextureIndex(parameters, item.lowX, item.lowY, item.lowStart);
+        item.low = (uint(tmem[source]) & 0xfffeu) | (item.low & 1u);
+    }
+    uint value = ram[item.word];
+    if (item.high != 0xffffffffu) value = (value & 0xffffu) | (item.high << 16);
+    if (item.low != 0xffffffffu) value = (value & 0xffff0000u) | item.low;
+    ram[item.word] = value;
+}
 
 kernel void triangleFill(device uint* ram [[buffer(0)]],
                          device const TriangleWord* plan [[buffer(1)]],
+                         constant ShadeParameters& shade [[buffer(2)]],
+                         constant uint& shaded [[buffer(3)]],
                          uint index [[thread_position_in_grid]]) {
     TriangleWord item = plan[index];
+    if (shaded) {
+        if (item.high != 0xffffffffu)
+            item.high = shadeRGB16(shade, item.highX, item.highY, item.highStart) | (item.high & 1u);
+        if (item.low != 0xffffffffu)
+            item.low = shadeRGB16(shade, item.lowX, item.lowY, item.lowStart) | (item.low & 1u);
+    }
     uint value = ram[item.word];
     if (item.high != 0xffffffffu)
         value = (value & 0x0000ffffu) | (item.high << 16);

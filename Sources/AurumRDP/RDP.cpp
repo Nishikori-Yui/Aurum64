@@ -2,6 +2,7 @@
 #include "RDP.hpp"
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <limits>
 
 namespace aurum::rdp {
@@ -20,6 +21,10 @@ Triangle decodeTriangle(std::span<const uint32_t> words) {
     result.shade = (result.opcode & 4u) != 0;
     result.texture = (result.opcode & 2u) != 0;
     result.z = (result.opcode & 1u) != 0;
+    result.leftMajor = (words[0] & 0x00800000u) != 0;
+    result.majorSlopeNegative = (words[5] & 0x80000000u) != 0;
+    result.tile = (words[0] >> 16) & 7;
+    result.level = (words[0] >> 19) & 7;
     result.yl = signExtend(words[0], 14);
     result.ym = signExtend(words[1] >> 16, 14);
     result.yh = signExtend(words[1], 14);
@@ -29,6 +34,27 @@ Triangle decodeTriangle(std::span<const uint32_t> words) {
     result.dxhdy = signExtend(words[5], 30);
     result.xm = signExtend(words[6], 28);
     result.dxmdy = signExtend(words[7], 30);
+    size_t offset = 8;
+    // Attribute blocks interleave pairs of integer halves, then their
+    // fractional halves four words later. Block order is shade, texture, Z.
+    const auto unpack = [&](auto& attributes) {
+        for (size_t channel = 0; channel < attributes.size(); ++channel) {
+            const auto field = [&](size_t group) {
+                const unsigned shift = channel & 1 ? 0 : 16;
+                const size_t index = offset + group + channel / 2;
+                const uint32_t high = (words[index] >> shift) & 0xffffu;
+                const uint32_t low = (words[index + 4] >> shift) & 0xffffu;
+                return std::bit_cast<int32_t>((high << 16) | low);
+            };
+            attributes[channel] = {field(0), field(2), field(8), field(10)};
+        }
+        offset += 16;
+    };
+    if (result.shade) unpack(result.rgba);
+    if (result.texture) unpack(result.stw);
+    if (result.z) result.depth = {
+        std::bit_cast<int32_t>(words[offset]), std::bit_cast<int32_t>(words[offset + 1]),
+        std::bit_cast<int32_t>(words[offset + 2]), std::bit_cast<int32_t>(words[offset + 3])};
     std::copy(words.begin(), words.end(), result.words.begin());
     return result;
 }
@@ -257,6 +283,15 @@ void Decoder::execute(std::span<const uint32_t> w) {
     case 0x08: case 0x09: case 0x0a: case 0x0b:
     case 0x0c: case 0x0d: case 0x0e: case 0x0f: {
         Triangle triangle = decodeTriangle(w);
+        triangle.tileFormat = tiles[triangle.tile * 4];
+        triangle.tileSize = tiles[triangle.tile * 4 + 1];
+        triangle.tileLine = tiles[triangle.tile * 4 + 2];
+        triangle.tileTmem = tiles[triangle.tile * 4 + 3];
+        triangle.tileSl = tileSizes_[triangle.tile * 4];
+        triangle.tileTl = tileSizes_[triangle.tile * 4 + 1];
+        triangle.tileSh = tileSizes_[triangle.tile * 4 + 2];
+        triangle.tileTh = tileSizes_[triangle.tile * 4 + 3];
+        triangle.tileModes = tileModes_[triangle.tile];
         triangle.cycleType = cycle;
         triangle.fbFormat = format;
         triangle.fbSize = size;

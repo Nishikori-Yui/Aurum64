@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "Renderer.hpp"
 #include "TrianglePlan.hpp"
+#include "TriangleMode.hpp"
+#include "TriangleTexture.hpp"
 #include "TextureCopy.hpp"
 #import <Metal/Metal.h>
 #include <algorithm>
@@ -10,7 +12,7 @@ namespace aurum::rdp {
 struct Renderer::Impl {
     id<MTLDevice> device;
     id<MTLCommandQueue> queue;
-    id<MTLComputePipelineState> fillPipeline, viPipeline, copyPipeline, trianglePipeline;
+    id<MTLComputePipelineState> fillPipeline, viPipeline, copyPipeline, trianglePipeline, textureTrianglePipeline;
     id<MTLBuffer> ram, output;
     bool finish(id<MTLCommandBuffer> command, std::string& error) {
         [command commit]; [command waitUntilCompleted];
@@ -36,10 +38,11 @@ bool Renderer::initialize(const char* path, std::string& error) {
         p.viPipeline = [p.device newComputePipelineStateWithFunction:[library newFunctionWithName:@"scanout"] error:&e];
         p.copyPipeline = [p.device newComputePipelineStateWithFunction:[library newFunctionWithName:@"textureCopy"] error:&e];
         p.trianglePipeline = [p.device newComputePipelineStateWithFunction:[library newFunctionWithName:@"triangleFill"] error:&e];
+        p.textureTrianglePipeline = [p.device newComputePipelineStateWithFunction:[library newFunctionWithName:@"triangleTexture"] error:&e];
         p.queue = [p.device newCommandQueue];
         p.ram = [p.device newBufferWithLength:8 * 1024 * 1024 options:MTLResourceStorageModeShared];
         p.output = [p.device newBufferWithLength:640 * 576 * 4 options:MTLResourceStorageModeShared];
-        if (!p.fillPipeline || !p.viPipeline || !p.copyPipeline || !p.trianglePipeline ||
+        if (!p.fillPipeline || !p.viPipeline || !p.copyPipeline || !p.trianglePipeline || !p.textureTrianglePipeline ||
             !p.queue || !p.ram || !p.output) {
             error = e.localizedDescription.UTF8String ?: "Cannot allocate Metal resources."; return false;
         }
@@ -91,6 +94,10 @@ bool Renderer::flatTriangle(uint8_t* memory, size_t length, uint32_t framebuffer
         error = "Flat triangle renderer is not ready.";
         return false;
     }
+    if (!length || length % 4 || length > impl->ram.length) {
+        error = "Invalid flat triangle memory size.";
+        return false;
+    }
     std::vector<aurum::rdp::TriangleWord> words;
     if (!aurum::rdp::makeFlatTrianglePlan(
             triangle, length, framebufferAddress, framebufferWidth, framebufferSize,
@@ -109,8 +116,47 @@ bool Renderer::flatTriangle(uint8_t* memory, size_t length, uint32_t framebuffer
         [encoder setComputePipelineState:p.trianglePipeline];
         [encoder setBuffer:p.ram offset:0 atIndex:0];
         [encoder setBuffer:plan offset:0 atIndex:1];
+        const ShadeParameters shade = makeShadeParameters(triangle);
+        const uint32_t shaded = isShadeTriangle(triangle);
+        [encoder setBytes:&shade length:sizeof(shade) atIndex:2];
+        [encoder setBytes:&shaded length:sizeof(shaded) atIndex:3];
         [encoder dispatchThreads:MTLSizeMake(words.size(), 1, 1)
           threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+        [encoder endEncoding];
+        if (!p.finish(command, error)) return false;
+        memcpy(memory, p.ram.contents, length);
+        return true;
+    }
+}
+bool Renderer::texturedTriangle(uint8_t* memory, size_t length, const Triangle& triangle,
+                                 const aurum::tmem::Store& tmem, std::string& error) {
+    if (!memory || !impl->ram || !length || length % 4 || length > impl->ram.length) {
+        error = "Invalid textured triangle memory or renderer."; return false;
+    }
+    std::vector<TriangleWord> words;
+    if (!makeTexturedTrianglePlan(triangle, length, words, error)) return false;
+    if (words.empty()) return true;
+    @autoreleasepool {
+        auto& p = *impl;
+        std::array<uint8_t, aurum::tmem::Store::kBytes> bytes;
+        tmem.copyBytes(bytes);
+        id<MTLBuffer> texture = [p.device newBufferWithBytes:bytes.data() length:bytes.size()
+            options:MTLResourceStorageModeShared];
+        id<MTLBuffer> plan = [p.device newBufferWithBytes:words.data() length:words.size() * sizeof(words[0])
+            options:MTLResourceStorageModeShared];
+        if (!texture || !plan) { error = "Cannot allocate textured triangle buffers."; return false; }
+        const auto parameters = makeTriangleTextureParameters(triangle);
+        memcpy(p.ram.contents, memory, length);
+        id<MTLCommandBuffer> command = [p.queue commandBuffer];
+        id<MTLComputeCommandEncoder> encoder = [command computeCommandEncoder];
+        if (!command || !encoder) { error = "Cannot create textured triangle command."; return false; }
+        [encoder setComputePipelineState:p.textureTrianglePipeline];
+        [encoder setBuffer:p.ram offset:0 atIndex:0];
+        [encoder setBuffer:plan offset:0 atIndex:1];
+        [encoder setBuffer:texture offset:0 atIndex:2];
+        [encoder setBytes:&parameters length:sizeof(parameters) atIndex:3];
+        [encoder dispatchThreads:MTLSizeMake(words.size(), 1, 1)
+          threadsPerThreadgroup:MTLSizeMake(p.textureTrianglePipeline.threadExecutionWidth, 1, 1)];
         [encoder endEncoding];
         if (!p.finish(command, error)) return false;
         memcpy(memory, p.ram.contents, length);

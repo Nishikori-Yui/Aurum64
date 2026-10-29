@@ -3,6 +3,7 @@
 #include "Capture.hpp"
 #include "TriangleMode.hpp"
 #include "TriangleReference.hpp"
+#include "TriangleTexture.hpp"
 #include "TriangleSpans.hpp"
 #include <cstdio>
 #include <cstdlib>
@@ -231,7 +232,7 @@ int main(int argc, char** argv) {
         for (uint32_t opcode = 0x08; opcode <= 0x0f; ++opcode) {
             const size_t count = Decoder::wordCount(static_cast<uint8_t>(opcode));
             std::vector<uint32_t> command(count, 0);
-            command[0] = opcode << 24 | 0x0123;
+            command[0] = opcode << 24 | ((opcode & 1) << 23) | 0x0123;
             command[1] = (0x0234u << 16) | 0x0345u;
             command[2] = 0x01234567;
             command[3] = 0x23456789;
@@ -256,7 +257,8 @@ int main(int argc, char** argv) {
                     triangle.xm == 0x0456789a &&
                     triangle.dxmdy == 0x056789ab,
                     "Triangle edge fields were decoded incorrectly");
-            require(triangle.shade == ((triangle.opcode & 4) != 0) &&
+            require(triangle.leftMajor == ((triangle.opcode & 1) != 0) &&
+                    triangle.shade == ((triangle.opcode & 4) != 0) &&
                     triangle.texture == ((triangle.opcode & 2) != 0) &&
                     triangle.z == ((triangle.opcode & 1) != 0),
                     "Triangle payload flags were decoded incorrectly");
@@ -310,9 +312,12 @@ int main(int argc, char** argv) {
         flatMode.shade = false;
         flatMode.texture = false;
         flatMode.z = false;
-        flatMode.cycleType = 1;
-        flatMode.otherModesHi = 0x100000;
+        flatMode.cycleType = 0;
+        flatMode.otherModesHi = kFlatPrimitiveModesHi;
         flatMode.otherModesLo = 0;
+        require(!isFlatPrimitiveTriangle(flatMode), "Legacy key-scale combiner accepted");
+        flatMode.combineHi = kFlatPrimitiveCombineHi;
+        flatMode.combineLo = kFlatPrimitiveCombineLo;
         require(aurum::rdp::isFlatPrimitiveTriangle(flatMode),
                 "Flat primitive triangle mode gate");
         flatMode.texture = true;
@@ -331,19 +336,19 @@ int main(int argc, char** argv) {
                        routedTriangleMemory.data(), routedTriangleMemory.size(),
                        triangle.fbAddress, triangle.fbWidth, triangle.fbSize,
                        aurum::rdp::primitiveColor16(triangle.primitiveColor), triangle,
-                       triangle.clipXh >> 2, triangle.clipYh >> 2,
-                       triangle.clipXl >> 2, triangle.clipYl >> 2, error) &&
+                       triangle.clipXh, triangle.clipYh,
+                       triangle.clipXl, triangle.clipYl, error) &&
                    drawFlatTriangleReference(
                        routedTriangleExpected.data(), routedTriangleExpected.size(),
                        triangle.fbAddress, triangle.fbWidth, triangle.fbSize,
                        aurum::rdp::primitiveColor16(triangle.primitiveColor), triangle,
-                       triangle.clipXh >> 2, triangle.clipYh >> 2,
-                       triangle.clipXl >> 2, triangle.clipYl >> 2, error);
+                       triangle.clipXh, triangle.clipYh,
+                       triangle.clipXl, triangle.clipYl, error);
         };
         const uint32_t routedTriangleCommands[] = {
             0xff100007, 0x1000,
             0xed000000, (32u << 12) | 32u,
-            0xef100000, 0,
+            0xef000000 | kFlatPrimitiveModesHi, 0,
             0xfc000000 | aurum::rdp::kFlatPrimitiveCombineHi,
             aurum::rdp::kFlatPrimitiveCombineLo,
             0xfa000000, 0x804020ff,
@@ -363,7 +368,7 @@ int main(int argc, char** argv) {
         require(flatSpans.size() == 4 && flatSpans[0].y == 0 &&
                 flatSpans[0].left == 2 && flatSpans[0].right == 2 &&
                 flatSpans[0].coverage == 15 && !flatSpans[0].valid &&
-                flatSpans[2].left == 6 &&
+                flatSpans[2].coverage == 0 &&
                 !flatSpans[2].valid,
                 "Flat triangle span boundaries");
 
@@ -372,17 +377,19 @@ int main(int argc, char** argv) {
         stepped.xh = 0; stepped.xm = 4 << 16; stepped.xl = 8 << 16;
         stepped.dxhdy = 4 << 16; stepped.dxmdy = 2 << 16;
         stepped.dxldy = 1 << 16;
+        stepped.leftMajor = true;
         const auto steppedSpans = generateTriangleSpans(stepped);
-        require(steppedSpans.size() == 3 && steppedSpans.front().y == 1 &&
-                steppedSpans.front().coverage == 15 &&
-                steppedSpans.back().y == 3 && steppedSpans.back().coverage == 1 &&
+        require(steppedSpans.size() == 4 && steppedSpans.front().y == 0 &&
+                steppedSpans.front().coverage == 14 &&
+                trianglePixelCoverage(steppedSpans.front(), 4) == 0x2f &&
+                steppedSpans.back().y == 3 && !steppedSpans.back().valid &&
                 steppedSpans[1].left <= steppedSpans[2].left,
                 "Subpixel and segmented triangle spans");
         Triangle filled;
         filled.yh = 0; filled.ym = 8; filled.yl = 16;
         filled.xh = 8 << 16; filled.xm = 2 << 16; filled.xl = 2 << 16;
         auto clippedSpans = generateTriangleSpans(filled);
-        clipTriangleSpans(clippedSpans, 4, 1, 7, 3);
+        clipTriangleSpans(clippedSpans, 16, 4, 28, 12);
         require(!clippedSpans[0].valid && clippedSpans[1].left == 4 &&
                 clippedSpans[1].right == 7 && clippedSpans[1].valid &&
                 !clippedSpans[3].valid,
@@ -396,7 +403,7 @@ int main(int argc, char** argv) {
         wide.dxmdy = INT32_MIN;
         wide.dxldy = INT32_MIN;
         const auto wideSpans = generateTriangleSpans(wide);
-        require(wideSpans.size() == 3, "Large fixed-point triangle range");
+        require(wideSpans.size() == 4, "Large fixed-point triangle range");
 
         Triangle degenerate;
         degenerate.yh = 12; degenerate.ym = 12; degenerate.yl = 12;
@@ -407,7 +414,7 @@ int main(int argc, char** argv) {
         std::string triangleError;
         require(drawFlatTriangleReference(triangleMemory.data(), triangleMemory.size(),
                                            0x1000, 16, 2, 0x7c01, filled,
-                                           0, 0, 8, 4, triangleError),
+                                           0, 0, 32, 16, triangleError),
                 triangleError.c_str());
         for (uint32_t y = 0; y < 4; ++y) {
             for (uint32_t x = 0; x < 8; ++x) {
@@ -424,16 +431,77 @@ int main(int argc, char** argv) {
         const auto beforeTriangleReject = triangleMemory;
         require(!drawFlatTriangleReference(triangleMemory.data(), triangleMemory.size(),
                                             0x1000, 16, 3, 0x7c01, filled,
-                                            0, 0, 8, 4, triangleError) &&
+                                            0, 0, 32, 16, triangleError) &&
                 triangleMemory == beforeTriangleReject,
                 "Invalid flat triangle target changed memory");
         std::vector<uint8_t> metalTriangleMemory(0x4000, 0x5a);
         require(renderer.flatTriangle(metalTriangleMemory.data(),
                                        metalTriangleMemory.size(), 0x1000, 16, 2,
-                                       0x7c01, filled, 0, 0, 8, 4, error),
+                                       0x7c01, filled, 0, 0, 32, 16, error),
                 error.c_str());
         require(metalTriangleMemory == triangleMemory,
                 "Metal flat triangle differs from CPU reference");
+        require(!renderer.flatTriangle(metalTriangleMemory.data(), (8 << 20) + 4,
+                                       0, 16, 2, 0, filled, 0, 0, 32, 16, error) &&
+                metalTriangleMemory == triangleMemory,
+                "Oversized triangle upload was not rejected before reading memory");
+
+        Triangle gradient = filled;
+        gradient.shade = true;
+        gradient.otherModesHi = kFlatPrimitiveModesHi;
+        gradient.combineHi = kFlatPrimitiveCombineHi;
+        gradient.combineLo = kShadeCombineLo;
+        gradient.combineValid = true;
+        gradient.fbSize = 2;
+        gradient.rgba[0] = {128 << 16, 16 << 16, 0, 0};
+        gradient.rgba[1] = {64 << 16, 0, 8 << 16, 8 << 16};
+        gradient.rgba[2] = {32 << 16, 0, 0, 0};
+        gradient.rgba[3] = {255 << 16, 0, 0, 0};
+        metalTriangleMemory.assign(0x4000, 0x5a);
+        require(renderer.flatTriangle(metalTriangleMemory.data(), metalTriangleMemory.size(),
+                                       0x1000, 16, 2, 0, gradient, 0, 0, 32, 16, error), error.c_str());
+        for (uint32_t y = 0; y < 4; ++y) for (uint32_t x = 0; x < 8; ++x) {
+            uint16_t value;
+            require(aurum::memory::readHalfword(metalTriangleMemory.data(), metalTriangleMemory.size(),
+                                               0x1000 + (y * 16 + x) * 2, value), "Gradient pixel read");
+            const uint16_t expected = x < 2 ? 0x5a5a : uint16_t((x * 2 << 11) | ((8 + y) << 6) | 9);
+            require(value == expected, "Metal per-pixel X/Y shade gradient differs");
+        }
+
+        Triangle textured = filled;
+        textured.texture = true;
+        textured.fbAddress = 0x1000; textured.fbWidth = 16; textured.fbSize = 2;
+        textured.clipXl = 32; textured.clipYl = 16;
+        textured.combineHi = kFlatPrimitiveCombineHi; textured.combineLo = kTextureCombineLo;
+        textured.combineValid = true; textured.otherModesHi = 0x8f0;
+        textured.tileSize = 2; textured.tileLine = 2;
+        textured.tileSh = 28; textured.tileTh = 12;
+        textured.stw[0] = {8 * 32 << 16, 32 << 16, 0, 0};
+        textured.stw[1] = {0, 0, 32 << 16, 32 << 16};
+        textured.stw[2] = {0x40000000, 0, 0, 0};
+        aurum::tmem::Store triangleTmem;
+        for (uint32_t y = 0; y < 4; ++y) for (uint32_t x = 0; x < 8; ++x)
+            triangleTmem.writeHwWord((y * 8 + x) ^ ((y & 1) ? 3u : 1u), uint16_t(x << 11 | y << 6));
+        for (bool perspective : {false, true}) {
+            textured.otherModesHi = 0x8f0 | (perspective ? 1u << 19 : 0u);
+            metalTriangleMemory.assign(0x4000, 0x5a);
+            require(renderer.texturedTriangle(metalTriangleMemory.data(), metalTriangleMemory.size(),
+                                               textured, triangleTmem, error), error.c_str());
+            for (uint32_t y = 0; y < 4; ++y) for (uint32_t x = 0; x < 8; ++x) {
+                uint16_t pixel;
+                require(aurum::memory::readHalfword(metalTriangleMemory.data(), metalTriangleMemory.size(),
+                    0x1000 + (y * 16 + x) * 2, pixel), "Textured triangle pixel read");
+                const uint32_t s = std::min(7u, x * (perspective ? 2u : 1u));
+                const uint32_t t = std::min(3u, y * (perspective ? 2u : 1u));
+                require(pixel == (x < 2 ? 0x5a5a : uint16_t(s << 11 | t << 6 | 1)),
+                        "GPU triangle affine/perspective texture control");
+            }
+        }
+        const auto beforeTextureReject = metalTriangleMemory;
+        textured.otherModesLo = 1;
+        require(!renderer.texturedTriangle(metalTriangleMemory.data(), metalTriangleMemory.size(),
+                                           textured, triangleTmem, error) && metalTriangleMemory == beforeTextureReject,
+                "Rejected textured triangle changed memory");
 
         std::mt19937 random(0x64);
         for (unsigned trial = 0; trial < 48; ++trial) {

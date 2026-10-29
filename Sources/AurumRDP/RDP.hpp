@@ -39,12 +39,26 @@ struct TextureRect {
     uint32_t clipXh = 0, clipYh = 0, clipXl = 0, clipYl = 0;
     uint32_t scissorMode = 0, otherModesHi = 0, otherModesLo = 0;
 };
+struct TriangleAttribute {
+    // Raw signed fixed-point coefficients; quantization belongs to the stage
+    // consuming them (color, texture or depth), not command decoding.
+    int32_t initial = 0, dx = 0, de = 0, dy = 0;
+    bool operator==(const TriangleAttribute&) const = default;
+};
 struct Triangle {
     uint32_t opcode = 0;
     uint32_t wordCount = 0;
     bool shade = false, texture = false, z = false;
+    bool leftMajor = false;
+    bool majorSlopeNegative = false;
+    uint32_t tile = 0, level = 0;
     int32_t yl = 0, ym = 0, yh = 0;
     int32_t xl = 0, dxldy = 0, xh = 0, dxhdy = 0, xm = 0, dxmdy = 0;
+    std::array<TriangleAttribute, 4> rgba{};
+    std::array<TriangleAttribute, 3> stw{};
+    TriangleAttribute depth{};
+    uint32_t tileFormat = 0, tileSize = 0, tileLine = 0, tileTmem = 0;
+    uint32_t tileSl = 0, tileTl = 0, tileSh = 0, tileTh = 0, tileModes = 0;
     uint32_t cycleType = 0;
     uint32_t fbFormat = 0, fbSize = 0, fbWidth = 0, fbAddress = 0;
     uint32_t clipXh = 0, clipYh = 0, clipXl = 0, clipYl = 0;

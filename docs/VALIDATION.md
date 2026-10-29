@@ -423,6 +423,9 @@ unfinished. No commercial game is claimed playable from this node.
 
 # Flat primitive triangles - 2026-10-28 (strict production gate)
 
+**Superseded by the independent audit below:** the original CPU/Metal
+self-comparison did not establish the advertised combiner or cycle semantics.
+
 The Metal flat-triangle word renderer is now reachable from the RDP decoder's
 production Video callback and Metal capture replay. Triangle issue-time state
 includes SetCombine and SetPrimColor. Dispatch accepts only a single exact
@@ -441,3 +444,135 @@ This is one narrow fill mode, not general triangle support. Coverage accuracy,
 shade/texture/Z interpolation, additional combiner tuples, blender/depth and
 game-scene compatibility remain open; no commercial game claim follows from
 these synthetic tests.
+
+# Flat triangle independent audit - 2026-10-28
+
+The first external triangle comparison invalidated the preceding node's
+"verified" designation. Cycle encoding 1 selects two-cycle, not one-cycle;
+the previous RGB multiplier selector 6 selects key scale, not the constant
+one. Its original flat fixture rendered black in the pinned reference while
+Aurum incorrectly wrote primitive RGB. The old tuple is now rejected. The
+corrected mode uses cycle encoding 0, disabled RGB/alpha dithering, and
+`(0 - 0) * 0 + PRIMITIVE` for RGB and alpha.
+
+The audit also replaces intersection-of-subrows spans with independent fixed
+edge evaluation and eight staggered pixel samples. It adds left-major decode,
+the integer-row XH/XM anchor, YM switching, fixed-point low-bit truncation and
+wrap, fractional scissor, and non-AA write-sample selection. RGBA16's low bit
+now comes from coverage, not primitive alpha. Writes beyond the stride remain
+valid within scissor/memory bounds; overlapping host words are merged before
+dispatch. Invalid buffer lengths are rejected before Metal uploads.
+
+Evidence for this correction:
+
+- A CPU-only CTest chain generates 320 original triangles and compares the
+  production decoder/planner and scalar writes to pinned Angrylion RDRAM.
+  Coverage counts are independently checked against the reference's hidden
+  bytes at written pixels; production hidden-buffer persistence is still absent.
+- An additional local sweep of 32 seeds, alternating 4/8 MiB, passed 10,240
+  triangle RDRAM/coverage comparisons. Cases include both orientations,
+  negative/fractional coordinates, scissor, YM changes, crossed/degenerate
+  edges, encoded X/slope limits, odd stride/base and differing alpha bytes.
+- Deliberate RDRAM and coverage corruption is rejected. The CPU test also
+  passes AddressSanitizer and UndefinedBehaviorSanitizer.
+- Native C++/Objective-C++/MSL build passes; CPU CTest subset passes 13/13.
+  Metal execution currently fails with `No Metal device is available` in
+  this execution environment. The full app build stops at the Swift macro
+  server (`Operation not permitted` / malformed response). No full-suite,
+  corrected GPU output or refreshed bundle success is claimed.
+- CTest and `scripts/test.py` now require the actual Metal replay to match
+  independent RDRAM, rather than only our own CPU oracle. These GPU checks
+  remain mandatory and have not been skipped or made optional.
+
+M5 remains incomplete: shade/STW/Z interpolation, perspective, and broader
+cycle/coverage behavior still need implementation and reference evidence.
+
+# Triangle attributes and direct shade - 2026-10-28
+
+RGBA, STW and Z now decode into signed attribute origins and X/edge/Y
+derivatives. The optional block ordering is verified for all eight triangle
+opcodes at every possible word split. Tile, level, major-edge orientation and
+the raw major-slope sign are also retained. STW/Z are decoded only: this does
+not enable textured or depth-tested triangles.
+
+A second direct-color tuple implements `(0 - 0) * 0 + SHADE` in one-cycle
+RGBA16 with dithering, AA, blending and depth disabled. The planner supplies
+per-lane X/Y and scan-start values, not precomputed shade RGB; the Metal kernel
+does fixed-point interpolation and quantization using the shared `ShadeMath.h`.
+The non-AA sample gate means accepted pixels use zero coverage-centroid
+offset. Other modes continue to reject rather than use that assumption.
+
+- The new 320-case shade fixture includes constant controls, X/Y/edge
+  gradients, negative derivatives, fractional positions, clipping, both edge
+  orientations, nine-bit clamp and full-width attribute overflow cases.
+- 32 seeds in alternating 4/8 MiB layouts pass 10,240 shaded-triangle
+  whole-RDRAM/written-coverage comparisons against pinned Angrylion. The same
+  10,240 flat-triangle regression sweep passes with the new plan format.
+- Independent negative controls reject corrupted RGB and coverage; an
+  algebraic X/Y-gradient unit test does not depend on the shared CPU oracle.
+  Shade alpha arithmetic has unit tests, but alpha-dependent blending and
+  alpha compare are not enabled or claimed externally validated.
+- Native C++/Objective-C++ and the updated MSL compile; struct-size checks
+  enforce the 36-byte write plan and 84-byte shade parameters on both sides.
+  Metal's module cache is now explicitly inside the build directory.
+  CPU CTest subset passes 16/16; the shaded comparison passes ASan/UBSan.
+- CTest and the full script require separate flat and shaded Metal replay
+  comparisons. GPU execution remains unavailable in this environment, so
+  these GPU assertions, full package validation and refreshed application
+  output are still pending. Compilation is not treated as GPU validation.
+
+This advances M5 attribute handling, but does not complete M5 or M6.
+
+# STW/Z setup and perspective division - 2026-10-29
+
+Independent intermediate-state probes now execute the pinned reference's
+triangle handlers and export actual span registers. Of 8,192 requests across
+all eight opcodes, 5,020 valid rows match RGBA/STW/Z initial values, X steps,
+STW Y steps, scan anchors, affine coordinates and corrected non-AA depth.
+Undefined intermediate registers for reference-invalid rows are not compared.
+Per-pixel STW/Z evaluation is separately checked against iterative advancement
+of those external row registers, including depth's untruncated X derivative.
+
+The perspective stage passes 589,824 external comparisons covering all
+65,536 signed W encodings, zero/negative W, S/T signs and overflow flags, plus
+affine bypass. Integer reciprocal endpoints are generated from a rational
+curve; one segment-six endpoint needs a one-unit downward adjustment. The
+original failing W=35 case remains a regression control. No external lookup
+table or renderer function was copied into production code.
+
+Corrupted fields, truncated input/output, trailing responses, invalid modes
+and out-of-range probe rows are rejected. CPU probes pass ASan/UBSan. The
+test-only Metal divider kernel compiles and is required to compare the same
+589,824 outputs; it cannot execute in the current no-Metal-device environment.
+Z interpolation/clamp is not depth testing, Z compression, or a Z-buffer write.
+
+# RGBA16 point-textured triangles - 2026-10-29
+
+An exact one-cycle direct TEXEL0 mode is now wired through the production
+Video callback and Metal replay. It accepts RGBA16 texture/framebuffer, point
+sampling (`sample_type=0`, `bi_lerp0=1`), affine/perspective coordinates, and
+tile shift/mask/mirror/clamp. AA, dithering, blending, LOD, alpha comparison,
+other formats, shade modulation, Z and unsupported TMEM wrap remain rejected.
+The full draw is validated before writes; each GPU invocation owns a complete
+destination word, including overlapped rows and odd framebuffer bases.
+
+Metal computes STW interpolation, division/overflow clamping, tile addressing
+and TMEM fetch per pixel. The CPU preflight uses the same arithmetic to validate
+addresses but does not supply precomputed colors. Shader and host both assert
+the 192-byte texture parameters and 36-byte word plan.
+
+- 320 original textured cases use two TMEM bases, all eight tile indices,
+  multiple line strides, nonzero tile origins, negative/fractional coordinates,
+  left/right major edges, both division modes, and zero/negative/varying W.
+- 32 seeds alternating 4/8 MiB pass 10,240 independent whole-RDRAM, TMEM and
+  written-coverage comparisons. CPU results also match the earlier standalone
+  sampler; external comparison remains the correctness gate.
+- Tests check tile snapshot mutation, unsupported-mode and TMEM rejection,
+  corrupted framebuffer/TMEM/coverage negative controls and ASan/UBSan.
+- Native C++/Objective-C++ and production/test MSL compile. CPU CTest subset
+  passes 26/26. GPU CTest and full-script comparisons remain required but
+  unavailable here; no refreshed app, full-suite success or GPU accuracy is
+  claimed. No GPU skip or CPU fallback has been added to turn failures green.
+
+This is a tested CPU implementation and compiled GPU integration, not a
+completed M5/M6 milestone or a compatibility release.

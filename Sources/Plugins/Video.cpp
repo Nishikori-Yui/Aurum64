@@ -135,13 +135,15 @@ EXPORT int CALL RomOpen() {
         return renderer->textureCopy(info.RDRAM, memorySize(), rect, textures.store(), error);
     };
     decoder.triangle = [](const aurum::rdp::Triangle& triangle) {
-        if (!aurum::rdp::isFlatPrimitiveTriangle(triangle)) return false;
         std::string error;
+        if (aurum::rdp::isTexturedTriangle(triangle))
+            return renderer->texturedTriangle(info.RDRAM, memorySize(), triangle, textures.store(), error);
+        if (!aurum::rdp::isColorTriangle(triangle)) return false;
         return renderer->flatTriangle(
             info.RDRAM, memorySize(), triangle.fbAddress, triangle.fbWidth,
             triangle.fbSize, aurum::rdp::primitiveColor16(triangle.primitiveColor), triangle,
-            int32_t(triangle.clipXh >> 2), int32_t(triangle.clipYh >> 2),
-            int32_t(triangle.clipXl >> 2), int32_t(triangle.clipYl >> 2), error);
+            int32_t(triangle.clipXh), int32_t(triangle.clipYh),
+            int32_t(triangle.clipXl), int32_t(triangle.clipYl), error);
     };
     decoder.sync = [] { *info.MI_INTR_REG |= 0x20; info.CheckInterrupts(); };
     if (const char* path = std::getenv("AURUM_RDP_TRACE")) trace.open(path, std::ios::binary | std::ios::trunc);

@@ -16,4 +16,7 @@ void n64video_set_vi_mode(int mode);
 void n64video_rdp_state_summary(uint8_t* output);
 void n64video_coordinate_probe_init(void);
 void n64video_coordinate_probe(const uint32_t* input, uint32_t* output);
+void n64video_attribute_probe(const uint32_t* input, uint32_t* output);
+void n64video_perspective_probe_init(void);
+void n64video_perspective_probe(const uint32_t* input, uint32_t* output);
 }
