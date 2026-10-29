@@ -111,6 +111,8 @@ void Decoder::reset() {
     address = width = size = format = color = cycle = 0;
     imageReadEn = zUpdateEn = zCompareEn = 0;
     tiFormat = tiSize = tiWidth = tiAddress = zbAddress = 0;
+    primitiveDepth = 0;
+    primitiveDepthValid = false;
     primitiveColor = 0;
     primitiveColorValid = false;
     blendColor = 0;
@@ -198,6 +200,10 @@ void Decoder::execute(std::span<const uint32_t> w) {
     case 0x3a:
         primitiveColor = b;
         primitiveColorValid = true;
+        break;
+    case 0x2e:
+        primitiveDepth = b;
+        primitiveDepthValid = true;
         break;
     case 0x39:
         blendColor = b;
@@ -299,6 +305,8 @@ void Decoder::execute(std::span<const uint32_t> w) {
         triangle.tileTh = tileSizes_[triangle.tile * 4 + 3];
         triangle.tileModes = tileModes_[triangle.tile];
         triangle.zbAddress = zbAddress;
+        triangle.primitiveDepth = primitiveDepth;
+        triangle.primitiveDepthValid = primitiveDepthValid;
         triangle.cycleType = cycle;
         triangle.fbFormat = format;
         triangle.fbSize = size;

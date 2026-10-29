@@ -5,6 +5,7 @@
 #include "TriangleReference.hpp"
 #include "TriangleTexture.hpp"
 #include "TriangleSpans.hpp"
+#include "TriangleDepth.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -25,6 +26,49 @@ int main(int argc, char** argv) {
         using namespace aurum::rdp;
         Renderer renderer; std::string error;
         require(renderer.initialize(argv[1], error), error.c_str());
+        {
+            Triangle depth;
+            depth.leftMajor = true;
+            depth.yl = depth.ym = 8;
+            depth.xh = 1 << 16;
+            depth.xl = depth.xm = 2 << 16;
+            depth.fbWidth = 4; depth.fbSize = 2;
+            depth.fbAddress = 0x1000; depth.zbAddress = 0x2000;
+            depth.clipXl = depth.clipYl = 16;
+            depth.otherModesHi = kFlatPrimitiveModesHi;
+            depth.otherModesLo = 0x24;
+            depth.combineValid = depth.primitiveColorValid = depth.primitiveDepthValid = true;
+            depth.combineHi = kFlatPrimitiveCombineHi; depth.combineLo = kFlatPrimitiveCombineLo;
+            depth.primitiveColor = 0xff0000ff; depth.primitiveDepth = 0x10000000;
+            // Single-lane rows preserve both neighboring color and Z halfwords.
+            for (uint32_t offset : {0u, 2u}) {
+                depth.fbAddress = 0x1000 + offset; depth.zbAddress = 0x2000 + offset;
+                std::vector<uint32_t> data(0x4000 / 4, 0x12345678);
+                require(renderer.depthTriangle(reinterpret_cast<uint8_t*>(data.data()),
+                                               data.size() * 4, depth, error), error.c_str());
+                for (unsigned address = 0; address < 0x4000; address += 2) {
+                    uint16_t actual;
+                    require(aurum::memory::readHalfword(reinterpret_cast<uint8_t*>(data.data()),
+                                                       data.size() * 4, address, actual), "Depth readback");
+                    uint16_t expected = (address & 2) ? 0x5678 : 0x1234;
+                    if (address == depth.fbAddress + 2 || address == depth.fbAddress + 10)
+                        expected = 0xf801;
+                    if (address == depth.zbAddress + 2 || address == depth.zbAddress + 10)
+                        expected = 0x800;
+                    require(actual == expected, "Depth single-lane or neighboring halfword mismatch");
+                }
+                const auto before = data;
+                const auto validDepth = depth;
+                for (uint32_t invalidZ : {depth.fbAddress, depth.fbAddress + 8,
+                                          depth.zbAddress ^ 2u, 0x3ff8u + offset}) {
+                    depth.zbAddress = invalidZ;
+                    require(!renderer.depthTriangle(reinterpret_cast<uint8_t*>(data.data()),
+                                                    data.size() * 4, depth, error) && data == before,
+                            "Rejected depth draw modified memory");
+                }
+                depth = validDepth;
+            }
+        }
         std::vector<uint32_t> ram(8 * 1024 * 1024 / 4, 0x11223344);
         Decoder decoder; unsigned fills = 0, syncs = 0;
         decoder.fill = [&](const Fill& fill) {

@@ -69,13 +69,14 @@ inline bool isSimpleCombinerTriangle(const Triangle& triangle) {
 
 inline bool isDepthUpdateTriangle(const Triangle& triangle) {
     const uint32_t modes = triangle.otherModesLo;
-    return triangle.z && !triangle.shade && !triangle.texture &&
+    const bool primitiveZ = (modes & 4u) != 0;
+    return (primitiveZ ? triangle.primitiveDepthValid : triangle.z) &&
+           !triangle.shade && !triangle.texture &&
            triangle.cycleType == 0 && triangle.fbFormat == 0 && triangle.fbSize == 2 &&
            triangle.scissorMode == 0 && triangle.otherModesHi == kFlatPrimitiveModesHi &&
-           modes == 0x20u && triangle.combineValid &&
+           (modes & ~4u) == 0x20u && triangle.combineValid &&
            triangle.combineHi == kFlatPrimitiveCombineHi &&
            triangle.combineLo == kFlatPrimitiveCombineLo &&
-           triangle.primitiveColorValid && triangle.zbAddress % 2 == 0 &&
-           triangle.depth.dx == 0 && triangle.depth.de == 0 && triangle.depth.dy == 0;
+           triangle.primitiveColorValid && triangle.zbAddress % 2 == 0;
 }
 } // namespace aurum::rdp

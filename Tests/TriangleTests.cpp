@@ -213,6 +213,64 @@ static void unitTests() {
     require(decoder.unsupported == 1 && memory != seed, "Corrected configuration did not draw");
 }
 
+static void depthTests() {
+    Decoder decoder;
+    Triangle triangle;
+    decoder.triangle = [&](const Triangle& value) { triangle = value; return true; };
+    const uint32_t state[] = {0xff10000f, 0x1000, 0xfe000000, 0x2000,
+        0xed000000, 0x400020, 0xef0000f0, 0x24,
+        0xfcffffff, 0xfffdf6fb, 0xfa000000, 0x854327ff,
+        0xee000000, 0x12348000};
+    const uint32_t command[] = {0xc8800010, 0x80000, 8u << 16, 0,
+        2u << 16, 0, 8u << 16, 0};
+    decoder.push(state);
+    decoder.push(command);
+    const Triangle valid = triangle;
+    require(isDepthUpdateTriangle(valid) && !valid.z && valid.primitiveDepthValid &&
+            valid.primitiveDepth == 0x12348000 && valid.zbAddress == 0x2000,
+            "SetPrimDepth/Z-image issue-time state");
+    const auto parameters = makeTriangleDepthParameters(valid);
+    require(parameters.dzPixel == 0x8000 && parameters.dzEncoded == 15 &&
+            triangleDepthValue(parameters, 2, 0, 2) == 0x91a0,
+            "Primitive Z/delta encoding");
+    const uint32_t mutation[] = {0xee000000, 0x76540004, 0xfe000000, 0x3000};
+    decoder.push(mutation); decoder.push(command);
+    require(triangle.primitiveDepth == 0x76540004 && triangle.zbAddress == 0x3000 &&
+            valid.primitiveDepth == 0x12348000 && valid.zbAddress == 0x2000,
+            "Primitive depth snapshot mutation");
+    decoder.reset(); decoder.push(command);
+    require(!triangle.primitiveDepthValid && triangle.primitiveDepth == 0,
+            "Reset retained primitive depth");
+    require(depthPixelDelta(0, 0) == 1 && depthPixelDelta(1 << 16, 0) == 3 &&
+            depthPixelDelta(-65536, 0) == 1 && depthPixelDelta(-131072, 0) == 3 &&
+            depthPixelDelta(4 << 16, 2 << 16) == 8 &&
+            depthPixelDelta(INT32_MIN, INT32_MIN) == 0x8000,
+            "Depth derivative normalization boundaries");
+    std::vector<TriangleWord> plan;
+    std::string error;
+    require(makeOpaqueDepthPlan(valid, 0x4000, plan, error) && !plan.empty(),
+            "Primitive depth plan rejected");
+    using Mutation = void (*)(Triangle&);
+    const Mutation rejected[] = {
+        +[](Triangle& t) { t.primitiveDepthValid = false; },
+        +[](Triangle& t) { t.otherModesLo |= 0x10; },
+        +[](Triangle& t) { t.otherModesLo |= 8; },
+        +[](Triangle& t) { t.otherModesLo |= 1; },
+        +[](Triangle& t) { t.otherModesLo |= 0x400; },
+        +[](Triangle& t) { t.zbAddress = 0x3ff0; },
+        +[](Triangle& t) { t.zbAddress = t.fbAddress; },
+        +[](Triangle& t) { t.zbAddress = t.fbAddress + 4; },
+        +[](Triangle& t) { t.zbAddress += 2; },
+        +[](Triangle& t) { t.zbAddress += 1; },
+    };
+    for (const auto change : rejected) {
+        auto item = valid;
+        change(item);
+        require(!makeOpaqueDepthPlan(item, 0x4000, plan, error) && plan.empty(),
+                "Invalid depth plan accepted or left partial writes");
+    }
+}
+
 static void textureTests() {
     Decoder decoder;
     Triangle triangle;
@@ -336,12 +394,8 @@ static void compare(const char* capture, const char* reference) {
                 acceptedPixels.emplace(word.lowX, word.lowY);
                 ++pixels;
             }
-            const bool highWrite = word.high != UINT32_MAX && (writeMask & 1u);
-            const bool lowWrite = word.low != UINT32_MAX && (writeMask & 2u);
             require(first || word.word > previous, "Duplicate/out-of-order GPU word ownership");
             first = false; previous = word.word;
-            (void)highWrite;
-            (void)lowWrite;
         }
         auto spans = generateTriangleSpans(triangle);
         clipTriangleSpans(spans, triangle.clipXh, triangle.clipYh, triangle.clipXl, triangle.clipYl);
@@ -427,6 +481,7 @@ int main(int argc, char** argv) {
     try {
         unitTests();
         attributeTests();
+        depthTests();
         textureTests();
         require(argc == 1 || argc == 3, "Usage: aurum-triangle-tests [capture reference.rdram]");
         if (argc == 3) compare(argv[1], argv[2]);

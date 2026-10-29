@@ -15,10 +15,11 @@ one-cycle RGBA16 triangle modes now share a Combiner path for primitive,
 interpolated shade, point TEXEL0 and shade-times-TEXEL0 output, including
 affine/perspective texture coordinates and threshold alpha compare without
 random dither. A narrow RGBA16 depth-update triangle path also writes the
-reference-compatible compressed Z value, while Z compare, Blender, persistent
+reference-compatible compressed Z value from interpolated Z or SetPrimDepth,
+including encoded delta-Z high bits. Z compare, Blender, persistent
 coverage, additional combiner modes, filtered textures and accurate VI filters
-remain unfinished. Their CPU evaluation has independent reference tests; GPU
-validation is pending. The CPU uses the cached
+remain unfinished. CPU and Metal evaluation have independent reference tests.
+The CPU uses the cached
 interpreter, not a JIT.
 There is no claim of real-time performance or commercial-game compatibility.
 

@@ -60,6 +60,8 @@ struct Triangle {
     uint32_t tileFormat = 0, tileSize = 0, tileLine = 0, tileTmem = 0;
     uint32_t tileSl = 0, tileTl = 0, tileSh = 0, tileTh = 0, tileModes = 0;
     uint32_t zbAddress = 0;
+    uint32_t primitiveDepth = 0;
+    bool primitiveDepthValid = false;
     uint32_t cycleType = 0;
     uint32_t fbFormat = 0, fbSize = 0, fbWidth = 0, fbAddress = 0;
     uint32_t clipXh = 0, clipYh = 0, clipXl = 0, clipYl = 0;
@@ -148,6 +150,8 @@ private:
     uint32_t address = 0, width = 0, size = 0, format = 0, color = 0, cycle = 0;
     uint32_t imageReadEn = 0, zUpdateEn = 0, zCompareEn = 0;
     uint32_t tiFormat = 0, tiSize = 0, tiWidth = 0, tiAddress = 0, zbAddress = 0;
+    uint32_t primitiveDepth = 0;
+    bool primitiveDepthValid = false;
     uint32_t primitiveColor = 0;
     bool primitiveColorValid = false;
     uint32_t blendColor = 0;

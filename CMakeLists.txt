@@ -198,6 +198,29 @@ add_test(NAME depth-triangle-metal-differential COMMAND aurum-reference-diff
     "${TRIANGLE_FIXTURES}/depth.aurcap")
 set_tests_properties(depth-triangle-metal-differential PROPERTIES
     FIXTURES_REQUIRED "depth-triangle-reference;depth-triangle-metal")
+foreach(mode IN ITEMS depth-gradient primitive-depth)
+    add_test(NAME ${mode}-generate COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/make_triangle_fixtures.py"
+        "${TRIANGLE_FIXTURES}/${mode}.aurcap" --${mode})
+    set_tests_properties(${mode}-generate PROPERTIES FIXTURES_SETUP ${mode}-input)
+    add_test(NAME ${mode}-reference COMMAND aurum-angrylion-reference
+        "${TRIANGLE_FIXTURES}/${mode}.aurcap" "${TRIANGLE_FIXTURES}/${mode}-reference")
+    set_tests_properties(${mode}-reference PROPERTIES
+        FIXTURES_REQUIRED ${mode}-input FIXTURES_SETUP ${mode}-reference)
+    add_test(NAME ${mode}-differential COMMAND aurum-triangle-tests
+        "${TRIANGLE_FIXTURES}/${mode}.aurcap" "${TRIANGLE_FIXTURES}/${mode}-reference.rdram")
+    set_tests_properties(${mode}-differential PROPERTIES FIXTURES_REQUIRED ${mode}-reference)
+    add_test(NAME ${mode}-metal COMMAND aurum-metal-replay
+        "${TRIANGLE_FIXTURES}/${mode}.aurcap" "${TRIANGLE_FIXTURES}/${mode}-metal"
+        "${CMAKE_BINARY_DIR}/AurumRDP.metallib")
+    set_tests_properties(${mode}-metal PROPERTIES
+        FIXTURES_REQUIRED ${mode}-input FIXTURES_SETUP ${mode}-metal)
+    add_test(NAME ${mode}-metal-differential COMMAND aurum-reference-diff
+        "${TRIANGLE_FIXTURES}/${mode}-reference" "${TRIANGLE_FIXTURES}/${mode}-metal"
+        "${TRIANGLE_FIXTURES}/${mode}.aurcap")
+    set_tests_properties(${mode}-metal-differential PROPERTIES
+        FIXTURES_REQUIRED "${mode}-reference;${mode}-metal")
+endforeach()
 add_test(NAME shade-generate COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_SOURCE_DIR}/scripts/make_triangle_fixtures.py" "${TRIANGLE_FIXTURES}/shade.aurcap" --shaded)
 set_tests_properties(shade-generate PROPERTIES FIXTURES_SETUP shade-input)

@@ -634,3 +634,40 @@ reference. Metal replay and differential tests are registered but remain
 unavailable in the current environment because no Metal device is present.
 Persistent hidden coverage and Z compare/update interaction remain the next C4
 work, so this does not complete depth support or M6.
+
+# Interpolated and primitive depth update - 2026-10-29
+
+The restricted RGBA16 depth-update path now consumes the actual per-pixel Z
+coefficients, preserving row/edge/fractional-X corrections, untruncated X
+derivatives, 32-bit wrap and the non-AA clamp before compression. Delta-Z derives
+from the signed high halves of X/Y derivatives, with normalization and the high
+encoded bits stored in the Z halfword. `SetPrimDepth` is decoded, reset and
+snapshotted at issue time; `z_source_sel` selects its Z and delta rather than
+triangle attributes, including triangle opcodes without a Z payload.
+
+Two additional 320-case matrices cover interpolated gradients/encoded limits
+and primitive-depth overrides (with/without Z payloads and eight delta values).
+CPU and actual Metal replay each match the pinned independent reference's whole
+RDRAM. Direct GPU controls also assert isolated high/low halfword writes preserve
+all other color/Z memory. Invalid Z targets, mismatched word alignment, and
+color/Z write-word aliases reject before dispatch and leave memory unchanged.
+Alias rendering itself still needs an ordered implementation, not a racing
+parallel dispatch.
+
+`MTL_DEBUG_LAYER=1 ctest --test-dir .build/native --output-on-failure` passes
+61/61 when run with authorized access to the Metal device. Earlier no-device
+results came from sandboxed device visibility, not absent host GPU hardware.
+At `05d9d62`, both remote build jobs also pass, including the original depth
+Metal differential. The new interpolation/primitive-depth changes require their
+own remote check after pushing. This supersedes the earlier GPU-pending notes
+for these tested paths, not their remaining semantic limitations.
+
+`scripts/build.sh` and the fresh-output `scripts/test.py` run also pass with
+Metal validation enabled. The full script now repeats constant/interpolated/
+primitive depth fixtures at both 4 and 8 MiB and rejects deliberately corrupted
+RDRAM or written coverage outputs, in addition to relocated-bundle and lifecycle
+regressions. These checks do not claim a persistent hidden-state implementation.
+
+Z compare, persistent hidden coverage and low delta-Z hidden bits remain
+unimplemented. No AA, blending, shaded/textured depth draw or full C4 completion
+is claimed.

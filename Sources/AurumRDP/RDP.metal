@@ -18,7 +18,7 @@ static_assert(sizeof(TriangleWord) == 36);
 static_assert(sizeof(ShadeParameters) == 84);
 static_assert(sizeof(TriangleTextureParameters) == 192);
 static_assert(sizeof(TriangleColorParameters) == 212);
-static_assert(sizeof(TriangleDepthParameters) == 232);
+static_assert(sizeof(TriangleDepthParameters) == 252);
 
 kernel void triangleDepth(device uint* ram [[buffer(0)]],
                           device const TriangleWord* plan [[buffer(1)]],
@@ -43,7 +43,7 @@ kernel void triangleDepth(device uint* ram [[buffer(0)]],
         stored = (zWord >> shift) & 0xffffu;
         return shift;
     };
-    const auto writeLane = [&](int x, int y, uint value, bool highLane,
+    const auto writeLane = [&](int x, int y, int start, uint value, bool highLane,
                                thread uint& destination) {
         uint address = 0, stored = 0;
         const uint shift = readZ(x, y, address, stored);
@@ -52,13 +52,14 @@ kernel void triangleDepth(device uint* ram [[buffer(0)]],
             destination = (destination & 0xffffu) | (pixel << 16);
         else
             destination = (destination & 0xffff0000u) | pixel;
-        const uint zValue = depthCompress(parameters.zValue) | (parameters.dzEncoded >> 2);
+        const uint zValue = depthCompress(triangleDepthValue(parameters, x, y, start)) |
+            (parameters.dzEncoded >> 2);
         zWord = (zWord & ~(0xffffu << shift)) | (zValue << shift);
     };
     if (item.high != 0xffffffffu)
-        writeLane(item.highX, item.highY, item.high, true, colorWord);
+        writeLane(item.highX, item.highY, item.highStart, item.high, true, colorWord);
     if (item.low != 0xffffffffu)
-        writeLane(item.lowX, item.lowY, item.low, false, colorWord);
+        writeLane(item.lowX, item.lowY, item.lowStart, item.low, false, colorWord);
     ram[item.word] = colorWord;
     if (haveZWord) ram[zWordIndex] = zWord;
 }

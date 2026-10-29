@@ -41,7 +41,7 @@ def depth_compress(value):
 
 
 def matrix(memory_bytes=4 << 20, seed=0x7A1A, shaded=False, textured=False,
-           alpha_compare=False, depth=False):
+           alpha_compare=False, depth=False, depth_gradient=False, primitive_depth=False):
     rng = random.Random(seed)
     records = [initial(memory_bytes), memory(2, 0x200000, b"\x6b\x5a" * (320 * 1024))]
     if depth:
@@ -113,6 +113,11 @@ def matrix(memory_bytes=4 << 20, seed=0x7A1A, shaded=False, textured=False,
         if depth:
             mode_lo = 0x20
             words += [0x3e000000, depth_address]
+            if primitive_depth:
+                mode_lo |= 4
+                z = (case * 197 + 13) & 0x7fff
+                dz = (0, 1, 3, 4, 32, 256, 0x8000, 0xffff)[case % 8]
+                words += [0xee000000, (z << 16) | dz]
         if textured:
             mode = 0x8f0 | (((case // 2) & 1) << 19)
             if shaded:
@@ -139,7 +144,7 @@ def matrix(memory_bytes=4 << 20, seed=0x7A1A, shaded=False, textured=False,
                   0xfc000000 | combine_hi, combine,
                   0xfa000000, color]
         if depth:
-            triangle_opcode = 0xc9000000
+            triangle_opcode = 0xc8000000 if primitive_depth and case & 1 else 0xc9000000
         elif textured and shaded:
             triangle_opcode = 0xce000000 | (tile << 16)
         elif textured:
@@ -179,8 +184,19 @@ def matrix(memory_bytes=4 << 20, seed=0x7A1A, shaded=False, textured=False,
             else:
                 stw = [[rng.getrandbits(32) for _ in range(4)] for _ in range(3)]
             words += pack_attributes(stw)
-        if depth:
-            words += [depth_z << 13, 0, 0, 0]
+        if depth and triangle_opcode & 0x01000000:
+            if depth_gradient or primitive_depth:
+                if case < 64:
+                    coefficients = [depth_z << 13, ((case % 5) - 2) << 16,
+                                    ((case % 7) - 3) << 16, ((case % 9) - 4) << 16]
+                elif case < 288:
+                    coefficients = [rng.randrange(0, 0x3ffff) << 13] + [
+                        rng.randrange(-512 << 16, 512 << 16) for _ in range(3)]
+                else:
+                    coefficients = [rng.getrandbits(32) for _ in range(4)]
+                words += [value & 0xffffffff for value in coefficients]
+            else:
+                words += [depth_z << 13, 0, 0, 0]
     records.append(rdp(4 if textured or depth else 3, 0x10000, words + [0xe9000000, 0]))
     return serialize(records)
 
@@ -194,10 +210,14 @@ if __name__ == "__main__":
     parser.add_argument("--textured", action="store_true")
     parser.add_argument("--alpha-compare", action="store_true")
     parser.add_argument("--depth", action="store_true")
+    parser.add_argument("--depth-gradient", action="store_true")
+    parser.add_argument("--primitive-depth", action="store_true")
     args = parser.parse_args()
     destination = args.destination
     destination.parent.mkdir(parents=True, exist_ok=True)
+    args.depth = args.depth or args.depth_gradient or args.primitive_depth
     if (args.alpha_compare or args.depth) and (args.shaded or args.textured):
         parser.error("alpha-compare/depth are currently limited to primitive-color fixtures")
     destination.write_bytes(matrix(args.memory, args.seed, args.shaded, args.textured,
-                                   args.alpha_compare, args.depth))
+                                   args.alpha_compare, args.depth, args.depth_gradient,
+                                   args.primitive_depth))

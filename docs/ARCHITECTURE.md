@@ -71,8 +71,8 @@ and MSL. The row anchor, edge/Y correction, fractional-X correction, clipped
 X stepping and nine-bit clamp are all exercised against an external renderer,
 not merely against the shared helper.
 Independent CPU tests compare whole RDRAM and written low coverage bits with
-the pinned reference, including a shade-times-TEXEL0 fixture. GPU validation of
-the current Combiner path is still pending. The selected RGBA16 TEXEL0 path
+the pinned reference, including a shade-times-TEXEL0 fixture. Metal replay also
+passes those independent differential fixtures. The selected RGBA16 TEXEL0 path
 supports point sampling with affine or perspective coordinates, and the
 Combiner can multiply it by interpolated shade. Z, LOD, filtering, alpha
 comparison with random dither and blending remain unsupported. The decoder
@@ -88,10 +88,16 @@ and STW. Texture division builds reciprocal segment endpoints from a rational
 curve with the independently checked segment-six quantization; no renderer
 lookup table is embedded. Intermediate attribute and divider probes invoke
 the pinned reference's real routines in the separate test executable.
-These stages have CPU evidence and mandatory GPU tests, not a GPU-pass claim.
+These stages have independent CPU and Metal differential evidence.
 Depth interpolation/clamping remains diagnostic for shaded/textured triangles.
 A restricted primitive-color RGBA16 depth-update mode now writes compressed Z
-with the same host-word ownership as color; Z compare, two-cycle combiner,
+from interpolated coefficients or SetPrimDepth, plus the high encoded delta-Z
+bits. SetPrimDepth is snapshotted even for triangle opcodes without a Z payload;
+its source-selection bit bypasses interpolated Z and uses the supplied delta.
+Color and Z must have matching word alignment and non-aliasing write-word sets;
+preflight rejects conflicting words before dispatch rather than allowing GPU
+write races. The 252-byte depth parameters carry coefficients, not rendered Z.
+Z compare, two-cycle combiner,
 blender, persistent hidden coverage, LOD and filtered VI remain unfinished.
 
 The isolated point-fetch helper also decodes IA8, IA16 and I8 from

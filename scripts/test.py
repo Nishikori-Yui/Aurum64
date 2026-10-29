@@ -47,7 +47,7 @@ with tempfile.TemporaryDirectory(prefix="aurum-coordinate-negative-") as temp:
 print("PASS: independent coordinate/texel negative controls and truncated probe rejection")
 # The CPU planner and the actual Metal kernel must each match the external
 # renderer. Comparing Metal only to our own span implementation is circular.
-for mode in ("flat", "shaded", "textured"):
+for mode in ("flat", "shaded", "textured", "depth", "depth-gradient", "primitive-depth"):
     for memory_size in (4 << 20, 8 << 20):
         prefix = tests / f"triangles-{memory_size}-{mode}"
         capture = pathlib.Path(str(prefix) + ".aurcap")
@@ -92,7 +92,7 @@ for mode in ("flat", "shaded", "textured"):
                 rejected = subprocess.run([str(root / ".build/native/aurum-triangle-tests"), capture, damaged],
                                           capture_output=True, text=True, timeout=30)
                 assert rejected.returncode == 1 and "TMEM mismatch" in rejected.stderr, rejected.stderr
-print("PASS: 4/8 MiB flat/shaded/textured triangles match independent layers; negative controls reject corruption")
+print("PASS: 4/8 MiB flat/shaded/textured/depth triangles match independent layers; negative controls reject corruption")
 run([sys.executable, root / "scripts/make_test_rom.py", tests / "fill.z64"])
 run([sys.executable, root / "scripts/make_test_rom.py", tests / "texture.z64", "--texture"])
 run([sys.executable, root / "scripts/make_test_rom.py", tests / "texture-ci8.z64", "--ci-texture"])

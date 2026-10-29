@@ -56,6 +56,18 @@ inline ShadeUInt depthDeltaComparator(ShadeUInt value) {
     return result;
 }
 
+inline ShadeUInt depthPixelDelta(ShadeInt dx, ShadeInt dy) {
+    const auto magnitude = [](ShadeInt derivative) {
+        const ShadeUInt high = (ShadeUInt(derivative) >> 16) & 0xffffu;
+        return (high & 0x8000u) ? (~high & 0x7fffu) : high;
+    };
+    const ShadeUInt sum = (magnitude(dx) + magnitude(dy)) & 0xffffu;
+    if (sum & 0xc000u) return 0x8000u;
+    if (!sum) return 1;
+    if (sum == 1) return 3;
+    return depthDeltaComparator(sum) << 1;
+}
+
 inline bool depthOpaquePass(ShadeUInt incoming, ShadeUInt stored,
                             ShadeUInt rawDzMem, ShadeUInt dzPixel,
                             ShadeUInt dzPixelEncoded) {
