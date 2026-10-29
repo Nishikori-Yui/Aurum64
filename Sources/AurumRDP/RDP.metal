@@ -32,7 +32,7 @@ kernel void triangleDepth(device uint* ram [[buffer(0)]],
     const CombinerColor primitive = primitiveCombinerColor(parameters.color.primitiveColor);
     const uint color = simpleCombinerRGBA16(parameters.color.combineHi, parameters.color.combineLo,
                                             CombinerColor{}, CombinerColor{}, primitive);
-    const auto readZ = [&](int x, int y, uint& address, uint& stored) {
+    const auto readZ = [&](int x, int y, thread uint& address, thread uint& stored) {
         address = parameters.zbAddress + (uint(y) * parameters.zbWidth + uint(x)) * 2u;
         zWordIndex = address >> 2;
         if (!haveZWord) {
@@ -43,7 +43,7 @@ kernel void triangleDepth(device uint* ram [[buffer(0)]],
         stored = (zWord >> shift) & 0xffffu;
         return shift;
     };
-    const auto writeLane = [&](int x, int y, uint value, uint& destination) {
+    const auto writeLane = [&](int x, int y, uint value, thread uint& destination) {
         uint address = 0, stored = 0;
         const uint shift = readZ(x, y, address, stored);
         destination = color | (value & 1u);
@@ -63,7 +63,7 @@ kernel void triangleColor(device uint* ram [[buffer(0)]],
                           uint index [[thread_position_in_grid]]) {
     TriangleWord item = plan[index];
     const CombinerColor primitive = primitiveCombinerColor(parameters.primitiveColor);
-    const auto write = [&](int x, int y, int start, uint& destination) {
+    const auto write = [&](int x, int y, int start, thread uint& destination) {
         const CombinerColor shade = (parameters.flags & 1u)
             ? shadeCombinerColor(parameters.texture.setup, x, y, start) : CombinerColor{};
         CombinerColor texel{};
