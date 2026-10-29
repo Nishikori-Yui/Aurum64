@@ -43,15 +43,22 @@ kernel void triangleDepth(device uint* ram [[buffer(0)]],
         stored = (zWord >> shift) & 0xffffu;
         return shift;
     };
-    const auto writeLane = [&](int x, int y, uint value, thread uint& destination) {
+    const auto writeLane = [&](int x, int y, uint value, bool highLane,
+                               thread uint& destination) {
         uint address = 0, stored = 0;
         const uint shift = readZ(x, y, address, stored);
-        destination = color | (value & 1u);
+        const uint pixel = color | (value & 1u);
+        if (highLane)
+            destination = (destination & 0xffffu) | (pixel << 16);
+        else
+            destination = (destination & 0xffff0000u) | pixel;
         const uint zValue = depthCompress(parameters.zValue) | (parameters.dzEncoded >> 2);
         zWord = (zWord & ~(0xffffu << shift)) | (zValue << shift);
     };
-    if (item.high != 0xffffffffu) writeLane(item.highX, item.highY, item.high, colorWord);
-    if (item.low != 0xffffffffu) writeLane(item.lowX, item.lowY, item.low, colorWord);
+    if (item.high != 0xffffffffu)
+        writeLane(item.highX, item.highY, item.high, true, colorWord);
+    if (item.low != 0xffffffffu)
+        writeLane(item.lowX, item.lowY, item.low, false, colorWord);
     ram[item.word] = colorWord;
     if (haveZWord) ram[zWordIndex] = zWord;
 }
