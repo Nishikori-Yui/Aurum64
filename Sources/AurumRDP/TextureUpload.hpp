@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 #include "MemoryBus.hpp"
+#include "RDP.hpp"
 #include "Tmem.hpp"
 #include <array>
 #include <cstddef>
@@ -35,6 +36,20 @@ public:
     static constexpr uint32_t kBankWords16 = 1024;
     static constexpr uint32_t kTmemBytes = 4096;
 
+    bool load(const uint8_t* rdram, size_t length, const aurum::rdp::TextureLoad& load) {
+        if (load.opcode != 0x30 && load.tileSize != load.tiSize) return false;
+        if (load.opcode == 0x30 && (load.tileFormat != 0 || load.tileSize > 2)) return false;
+        setTextureImage(load.tiFormat, load.tiSize, load.tiWidth, load.tiAddress);
+        setTile(load.tile, load.tileTmem, load.tileLine, load.tileSize);
+        if (load.opcode == 0x30)
+            return loadTlut(rdram, length, load.tile, load.sl, load.tl, load.sh, load.th);
+        if (load.opcode == 0x33)
+            return loadBlock(rdram, length, load.tile, load.sl, load.tl, load.sh, load.dxt);
+        if (load.opcode == 0x34)
+            return loadTile(rdram, length, load.tile, load.sl, load.tl, load.sh, load.th);
+        return false;
+    }
+
     void setTextureImage(uint32_t format, uint32_t size, uint32_t width,
                          uint32_t address) {
         tiFormat = format; tiSize = size; tiWidth = width; tiAddress = address;
@@ -44,9 +59,13 @@ public:
         setTile(tile, tmemWord, 0);
     }
     void setTile(uint32_t tile, uint32_t tmemWord, uint32_t line) {
+        setTile(tile, tmemWord, line, 2);
+    }
+    void setTile(uint32_t tile, uint32_t tmemWord, uint32_t line, uint32_t size) {
         if (tile < tmemWords.size()) {
             tmemWords[tile] = tmemWord & 0x1ff;
             tileLines[tile] = line & 0x1ff;
+            tileSizes[tile] = size & 3;
         }
     }
 
@@ -134,10 +153,12 @@ public:
         // A TLUT is a single row of 16-bit palette entries regardless of the
         // texture image size; anything else is not a defined upload rather
         // than something to approximate.
-        if (rows != 1 || tiSize != 2) return false;
+        if (rows != 1 || tiSize != 2 || tileSizes[tile] > 2 || (tiAddress & 1)) return false;
         const uint32_t destination = tmemWords[tile];
-        // Each entry occupies four hardware words (eight bytes).
-        if (uint64_t(destination << 2) + uint64_t(columns) * 16 > kBankWords16)
+        // TLUT replicates each source halfword into four words. A size-0 load
+        // tile packs entries consecutively; size-1/2 descriptors leave gaps.
+        const uint32_t step = 4u << tileSizes[tile];
+        if (uint64_t(destination << 2) + uint64_t(columns - 1) * step + 4 > kTmemWords16)
             return false;
         if (!sourceReadsValid(columns, 1, sl >> 2, tl >> 2, rdramBytes))
             return false;
@@ -146,7 +167,7 @@ public:
             const uint16_t value =
                 readSourceHalfword(rdram, rdramBytes, x0 + entry, y0);
             for (uint32_t copy = 0; copy < 4; ++copy)
-                tmem.writeHwWord((destination << 2) + entry * 16 + copy, value);
+                tmem.writeHwWord((destination << 2) + entry * step + copy, value);
         }
         return true;
     }
@@ -248,6 +269,7 @@ private:
     uint32_t tiFormat = 0, tiSize = 0, tiWidth = 0, tiAddress = 0;
     std::array<uint32_t, 8> tmemWords{};
     std::array<uint32_t, 8> tileLines{};
+    std::array<uint32_t, 8> tileSizes{2,2,2,2,2,2,2,2};
     aurum::tmem::Store tmem;
 };
 }

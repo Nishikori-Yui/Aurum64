@@ -2,13 +2,18 @@
 #include "Capture.hpp"
 #include "MemoryBus.hpp"
 #include "RDP.hpp"
+#include "TriangleMode.hpp"
 #include "TextureUpload.hpp"
+#ifdef AURUM_METAL_REPLAY
+#include "Renderer.hpp"
+#endif
 #include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <filesystem>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -69,7 +74,8 @@ struct Replay {
                                lastStateHash});
     }
 
-    void video(const aurum::capture::Record& record, uint64_t frames) {
+    void video(const aurum::capture::Record& record, uint64_t frames,
+               uint64_t submissions) {
         require(record.payload.size() == 28, "Invalid VI capture payload.");
         constexpr uint32_t map[7] = {0, 1, 2, 3, 4, 5, 6};
         uint32_t vi[14]{};
@@ -103,7 +109,7 @@ struct Replay {
             scaledHeight <= 0 || !xScale || !yScale) {
             color.emplace_back();
             geometry.emplace_back(0, 0);
-            checkpoints.push_back({2, record.sequence, 0, 0, frames + 1,
+            checkpoints.push_back({2, record.sequence, submissions, 0, frames + 1,
                                    lastStateHash});
             return;
         }
@@ -138,7 +144,7 @@ struct Replay {
         }
         color.push_back(std::move(pixels));
         geometry.emplace_back(outWidth, outHeight);
-        checkpoints.push_back({2, record.sequence, 0, 0, frames + 1,
+        checkpoints.push_back({2, record.sequence, submissions, 0, frames + 1,
                                lastStateHash});
     }
 };
@@ -159,6 +165,18 @@ void replay(aurum::rdp::Decoder& decoder, Replay& output,
         } else if (record.type == aurum::capture::kRecordRDP) {
             if (record.payload.size() < 16 || (record.payload.size() - 16) % 4 != 0)
                 throw std::runtime_error("Invalid RDP submission payload.");
+            const uint32_t start = readLE(record.payload.data());
+            const uint32_t end = readLE(record.payload.data() + 4);
+            const uint32_t xbus = readLE(record.payload.data() + 12);
+            require(end >= start && (end - start) % 4 == 0,
+                    "Invalid RDP submission range.");
+            const uint32_t range = end - start;
+            require(record.payload.size() - 16 == range,
+                    "RDP submission payload does not match its address range.");
+            if (xbus)
+                require(range <= 4096, "XBUS RDP range is too large.");
+            else
+                require(end <= output.rdram.size(), "RDRAM RDP range is outside memory.");
             decoder.beginSubmission();
             for (size_t offset = 16; offset < record.payload.size(); offset += 4) {
                 const uint32_t words[1] = {readBE(record.payload.data() + offset)};
@@ -166,9 +184,6 @@ void replay(aurum::rdp::Decoder& decoder, Replay& output,
             }
             // Preserve the submitted command words at their DPC addresses so raw RDRAM
             // comparisons include the exact buffered stream, as the reference replay does.
-            const uint32_t start = readLE(record.payload.data());
-            const uint32_t end = readLE(record.payload.data() + 4);
-            const uint32_t xbus = readLE(record.payload.data() + 12);
             if (!xbus && end >= start && end <= output.rdram.size() &&
                 record.payload.size() >= 16 + (end - start)) {
                 for (uint32_t address = start; address < end; address += 4) {
@@ -180,7 +195,7 @@ void replay(aurum::rdp::Decoder& decoder, Replay& output,
             }
             output.stateCheckpoint(decoder, record.sequence);
         } else if (record.type == aurum::capture::kRecordVI) {
-            output.video(record, decoder.viCount());
+            output.video(record, decoder.viCount(), decoder.submissionCount());
             decoder.beginVI();
         }
     }
@@ -196,12 +211,19 @@ void write(const std::string& prefix, const char* suffix, const void* bytes, siz
 }
 
 int main(int argc, char** argv) {
+#ifdef AURUM_METAL_REPLAY
+    if (argc != 4) {
+        std::fprintf(stderr, "Usage: aurum-metal-replay file.aurcap output-prefix library.metallib\n");
+        return 2;
+    }
+#else
     if (argc < 2 || argc > 3) {
         std::fprintf(stderr, "Usage: aurum-aurcap-replay file.aurcap [output-prefix]\n");
         return 2;
     }
+#endif
     try {
-        const bool emitLayers = argc == 3;
+        const bool emitLayers = argc >= 3;
         const std::string prefix = emitLayers ? argv[2] : std::string{};
         std::ifstream input(argv[1], std::ios::binary);
         if (!input) throw std::runtime_error("Cannot open capture.");
@@ -225,6 +247,35 @@ int main(int argc, char** argv) {
 
         Replay output{memoryBytes};
         aurum::rdp::Decoder decoder;
+#ifdef AURUM_METAL_REPLAY
+        aurum::rdp::Renderer renderer;
+        require(renderer.initialize(argv[3], error), error.c_str());
+        decoder.fill = [&](const aurum::rdp::Fill& fill) {
+            require(renderer.fill(output.rdram.data(), output.rdram.size(), fill, error), error.c_str());
+        };
+        decoder.textureRect = [&](const aurum::rdp::TextureRect& rect) {
+            return renderer.textureCopy(output.rdram.data(), output.rdram.size(), rect,
+                                        output.textures.store(), error);
+        };
+        decoder.triangle = [&](const aurum::rdp::Triangle& triangle) {
+            if (aurum::rdp::isDepthTriangle(triangle))
+                return renderer.depthTriangle(output.rdram.data(), output.rdram.size(),
+                                              triangle, error);
+            if (aurum::rdp::isSimpleCombinerTriangle(triangle))
+                return renderer.combinerTriangle(output.rdram.data(), output.rdram.size(),
+                                                 triangle, output.textures.store(), error);
+            if (aurum::rdp::isTexturedTriangle(triangle))
+                return renderer.texturedTriangle(output.rdram.data(), output.rdram.size(), triangle,
+                                                   output.textures.store(), error);
+            if (!aurum::rdp::isColorTriangle(triangle)) return false;
+            return renderer.flatTriangle(
+                output.rdram.data(), output.rdram.size(), triangle.fbAddress,
+                triangle.fbWidth, triangle.fbSize,
+                aurum::rdp::primitiveColor16(triangle.primitiveColor), triangle,
+                int32_t(triangle.clipXh), int32_t(triangle.clipYh),
+                int32_t(triangle.clipXl), int32_t(triangle.clipYl), error);
+        };
+#else
         decoder.fill = [&](const aurum::rdp::Fill& fill) {
             const uint32_t bytes = fill.size == 2 ? 2 : 4;
             for (uint32_t y = fill.y0; y < fill.y1; ++y) {
@@ -244,31 +295,20 @@ int main(int argc, char** argv) {
                 }
             }
         };
+#endif
         decoder.textureLoad = [&](const aurum::rdp::TextureLoad& load) {
-            // Only the 8-bit, RGBA16 and RGBA32 paths are modeled. Anything
-            // else stays reported as unsupported instead of producing a
-            // plausible-looking TMEM.
-            if (load.tiSize != 1 && load.tiSize != 2 && load.tiSize != 3)
-                return false;
-            // TMEM accumulates across uploads, so the same store is reused.
-            // A rejected upload leaves it untouched.
-            aurum::texture::Uploader& uploader = output.textures;
-            uploader.setTextureImage(load.tiFormat, load.tiSize, load.tiWidth,
-                                     load.tiAddress);
-            uploader.setTile(load.tile, load.tileTmem, load.tileLine);
-            if (load.opcode == 0x30)
-                return uploader.loadTlut(output.rdram.data(), output.rdram.size(),
-                                         load.tile, load.sl, load.tl, load.sh,
-                                         load.th);
-            if (load.opcode == 0x33)
-                return uploader.loadBlock(output.rdram.data(),
-                                          output.rdram.size(), load.tile,
-                                          load.sl, load.tl, load.sh, load.dxt);
-            return uploader.loadTile(output.rdram.data(), output.rdram.size(),
-                                     load.tile, load.sl, load.tl, load.sh,
-                                     load.th);
+            return output.textures.load(output.rdram.data(), output.rdram.size(), load);
         };
         replay(decoder, output, records);
+        bool hiddenAvailable = false;
+#ifdef AURUM_METAL_REPLAY
+        std::vector<uint8_t> hiddenBytes;
+        hiddenAvailable = decoder.unsupported == 0 && renderer.copyHidden(output.rdram.size(), hiddenBytes);
+        if (emitLayers && hiddenAvailable)
+            write(prefix, ".hidden", hiddenBytes.data(), hiddenBytes.size());
+#endif
+        // Reusing an output prefix must not leave a stale, apparently valid layer.
+        if (emitLayers && !hiddenAvailable) std::filesystem::remove(prefix + ".hidden");
         if (emitLayers) {
             write(prefix, ".rdram", output.rdram.data(), output.rdram.size());
             // TMEM in hardware byte layout so it is directly comparable with
@@ -306,7 +346,11 @@ int main(int argc, char** argv) {
             std::ofstream manifest(prefix + ".manifest", std::ios::binary | std::ios::trunc);
             require(bool(manifest), "Cannot write replay manifest.");
             manifest << "format=aurum-reference-layers/1\n"
+#ifdef AURUM_METAL_REPLAY
+                        "engine=aurum-metal-replay\n"
+#else
                         "engine=aurum-scalar-replay\n"
+#endif
                         "rdram=host-word-swapped:N64ByteAddress:whole\n"
                         "tmem=4096:hardware-byte-layout\n"
                         "vi-color=RGBA8:R,G,B,A little-endian\n"
@@ -314,6 +358,8 @@ int main(int argc, char** argv) {
                         "geometry=little-endian-uint32-pairs:width-height-per-vi\n"
                         "checkpoints=little-endian-uint64-sextuples:type-record-submission-command-vi-hash\n";
             manifest << "states=256-byte-little-endian-uint32-grid:v1:49-named-rdp-fields\n";
+            if (hiddenAvailable)
+                manifest << "hidden=oneBytePer16BitPixel:twoBits-with-unwritten-marker4\n";
         }
 
         std::printf("{\"records\":%zu,\"submissions\":%llu,\"commands\":%llu,"

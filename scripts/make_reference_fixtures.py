@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Generate original, self-contained RDP/VI capture fixtures."""
 import pathlib
+import random
 import struct
 import sys
 
@@ -334,6 +335,20 @@ def texture_8bit_fixture(fmt: int) -> bytes:
     return serialize(records)
 
 
+def texture_ia16_fixture() -> bytes:
+    """A single IA16 tile with distinct intensity and alpha bytes."""
+    width, height = 8, 4
+    texels = bytearray()
+    for y in range(height):
+        for x in range(width):
+            texels += bytes((0x20 + y * 8 + x, 0x80 + y * 8 + x))
+    words = (set_texture_image(3, 2, width, TEXTURE_SRC) +
+             set_tile(0, 3, 2, width // 4, 0) +
+             load_tile(0, 0, 0, (width - 1) * 4, (height - 1) * 4) + TEXTURE_SYNC)
+    return serialize([initial(8 << 20), memory(2, TEXTURE_SRC, bytes(texels)),
+                      rdp(3, 0x100000, words), vi(4, 2, TEXTURE_FB, 64)])
+
+
 def texture_8bit_offset_fixture() -> bytes:
     """CI8 with a narrower image and a non-zero tmem base, to move the row base."""
     width = 8
@@ -406,6 +421,195 @@ def texture_tlut_fixture() -> bytes:
     ])
 
 
+def texture_copy_fixture(memory_bytes: int = 8 << 20, matrix: bool = False) -> bytes:
+    """Original RGBA16 copy draws: no ROM data or upstream renderer code."""
+    width, height = 32, 16
+    source = b"".join(struct.pack(">H", ((x * 3 & 31) << 11) |
+                                 ((y * 5 & 31) << 6) | ((x + y & 31) << 1) |
+                                 ((x ^ y) & 1))
+                      for y in range(height) for x in range(width))
+    framebuffer = TEXTURE_FB + 2  # preserve a neighboring halfword
+    stride = 63                  # adjacent rows can share one host word
+    records = [initial(memory_bytes), memory(2, TEXTURE_SRC, source)]
+    seed = b"\xa5\x5a" * ((8192 * 128 if matrix else 8192) // 2)
+    # Each record also contains a four-byte address; stay below the 1 MiB
+    # payload cap even when seeding an entire matrix of independent targets.
+    for offset in range(0, len(seed), 1 << 19):
+        records.append(memory(len(records) + 1, TEXTURE_FB + offset, seed[offset:offset + (1 << 19)]))
+    sequence = len(records) + 1
+
+    def submit(words):
+        nonlocal sequence
+        records.append(rdp(sequence, 0x100000 + (sequence - 4) * 0x100, words))
+        sequence += 1
+
+    base = 257 if matrix else 1
+    submit(set_texture_image(0, 2, width, TEXTURE_SRC) +
+           set_tile(0, 0, 2, width // 4, base) +
+           load_tile(0, 0, 0, (width - 1) * 4, (height - 1) * 4) +
+           set_image(2, framebuffer, stride) + scissor(0, 0, 62 * 4, 64 * 4))
+    rng = random.Random(0xA64007)
+    for index in range(128 if matrix else 1):
+        flip = bool(index & 1)
+        x0, y0 = (rng.randrange(3, 25), rng.randrange(3, 25)) if matrix else (1, 2)
+        x1, y1 = x0 + rng.randrange(1, 34), y0 + rng.randrange(1, 20)
+        clip_x0, clip_y0 = (x0 + index % 5, y0 + index % 4) if matrix else (0, 0)
+        clip_x1, clip_y1 = min(61, x1 - index % 3), min(63, y1 + 1 - index % 4)
+        modes = (5 << 4) | (4 << 14)  # S/T mask
+        if index & 2:
+            modes |= 1 << 8 | 1 << 18  # mirror
+        if index & 4:
+            modes |= 1 << 9 | 1 << 19  # clamp ignored in copy
+        if matrix:
+            modes |= rng.choice((0, 1, 2, 15)) | rng.choice((0, 1, 2, 15)) << 10
+        tile = set_tile(0, 0, 2, width // 4, base)
+        tile[1] |= modes
+        sl, tl = (index % 3 * 4, index % 4 * 4) if matrix else (0, 0)
+        s = rng.randrange(-2000, 2000) if matrix else 0
+        t = rng.randrange(-1000, 1000) if matrix else 0
+        ds, dt = (rng.choice((4096, 2048, 1024, -4096, 511, -33)),
+                  rng.choice((1024, 512, -1024, 4096, 127, -31))) if matrix else (4096, 1024)
+        destination = framebuffer + (index * 8192 if matrix else 0)
+        submit(set_image(2, destination, stride) +
+               tile + [0xf2000000 | sl << 12 | tl, (sl + 124) << 12 | (tl + 60)] +
+               scissor(clip_x0 * 4, clip_y0 * 4, clip_x1 * 4, clip_y1 * 4) +
+               [0xef200000, index & 1,
+                (0xe5000000 if flip else 0xe4000000) | x1 * 4 << 12 | y1 * 4,
+                x0 * 4 << 12 | y0 * 4, (s & 65535) << 16 | (t & 65535),
+                (ds & 65535) << 16 | (dt & 65535)] + TEXTURE_SYNC)
+    records.append(vi(sequence, 2, framebuffer, stride))
+    return serialize(records)
+
+
+def texture_copy_feedback_fixture() -> bytes:
+    """A completed GPU draw becomes the next upload's RDRAM source."""
+    pixels = b"".join(struct.pack(">H", 0x4001 + y * 0x100 + x * 2)
+                       for y in range(8) for x in range(8))
+    words = set_texture_image(0, 2, 8, TEXTURE_SRC) + set_tile(0, 0, 2, 2, 0)
+    words += load_tile(0, 0, 0, 28, 28)
+    words += set_image(2, TEXTURE_FB, 16) + scissor(0, 0, 64, 32) + [0xef200000, 0]
+    words += [0xe4000000 | 28 << 12 | 28, 0, 0, 4096 << 16 | 1024]
+    words += set_texture_image(0, 2, 16, TEXTURE_FB) + set_tile(1, 0, 2, 2, 32)
+    words += load_tile(1, 0, 0, 28, 28)
+    words += [0xe4000000 | 60 << 12 | 28, 1 << 24 | 32 << 12, 0, 4096 << 16 | 1024]
+    words += TEXTURE_SYNC
+    return serialize([initial(4 << 20), memory(2, TEXTURE_SRC, pixels),
+                      rdp(3, 0x100000, words), vi(4, 2, TEXTURE_FB, 16)])
+
+
+def texture_indexed_fixture(bits: int, matrix: bool = False, bank_probe: bool = False) -> bytes:
+    """CI4/8 copy with a complete original RGBA16 palette in upper TMEM."""
+    width, height = 32, 8
+    palette_address = TEXTURE_SRC + 0x1000
+    palette = b"".join(struct.pack(">H", ((i * 7 & 31) << 11) |
+                                  ((i * 3 & 31) << 6) | ((i >> 3 & 31) << 1) |
+                                  (i & 1)) for i in range(256))
+    source = bytes((i * 13 + i // width) & 255 for i in range(width * height))
+    packed_width = width if bits == 8 else width // 2
+    if bits == 4:
+        source = bytes((((i * 2) & 15) << 4) | ((i * 2 + 1) & 15)
+                       for i in range(packed_width * height))
+    records = [initial(4 << 20), memory(2, TEXTURE_SRC, source),
+               memory(3, palette_address, palette),
+               memory(4, TEXTURE_FB, b"\x6b\x5a" * (8192 * (64 if matrix else 1) // 2))]
+    sequence = 5
+
+    def submit(words):
+        nonlocal sequence
+        records.append(rdp(sequence, 0x100000 + (sequence - 5) * 0x100, words))
+        sequence += 1
+
+    # A size-0 load tile packs four replicated halfwords per palette entry.
+    submit(set_image(2, TEXTURE_FB, 63) +
+           set_texture_image(0, 2, 256, palette_address) + set_tile(7, 0, 0, 0, 256) +
+           load_tlut(7, 0, 0, 255 * 4, 0) +
+           set_texture_image(2, 1, packed_width, TEXTURE_SRC) +
+           set_tile(0, 2, 1, packed_width // 8, 16) +
+           load_tile(0, 0, 0, (packed_width - 1) * 4, (height - 1) * 4))
+    if bank_probe:
+        # Break palette replication deliberately. A copy qword must read the
+        # corresponding palette port for each lane, not reuse a decoded color.
+        submit(set_texture_image(0, 2, 16, palette_address) + set_tile(6, 0, 2, 4, 256) +
+               load_tile(6, 0, 0, 15 * 4, 0))
+    rng = random.Random(0x64004 + bits)
+    for index in range(64 if matrix else 1):
+        tile = set_tile(0, 2, 1 if bits == 8 else 0, packed_width // 8, 16)
+        smode, tmode = (5 << 4), (3 << 4)
+        if matrix:
+            smode |= rng.choice((0, 1, 15)) | ((index & 1) << 8) | ((index & 2) << 8)
+            tmode |= rng.choice((0, 1, 15)) | ((index & 2) << 7) | ((index & 1) << 9)
+        tile[1] |= smode | tmode << 10 | (index & 15) << 20
+        x0, y0 = 1 + index % 7, 2 + index % 5
+        x1, y1 = x0 + 23, y0 + 7
+        s, t = (rng.randrange(-1000, 1000), rng.randrange(-200, 200)) if matrix else (0, 0)
+        words = set_image(2, TEXTURE_FB + index * 8192 + 2, 63) + tile
+        words += [0xf2000000, 124 << 12 | 28]
+        words += scissor((x0 + index % 3) * 4, (y0 + index % 2) * 4, (x1 - index % 2) * 4, (y1 + 1) * 4)
+        words += [0xef208000, index & 1,
+                  (0xe5000000 if index & 1 else 0xe4000000) | x1 * 4 << 12 | y1 * 4,
+                  x0 * 4 << 12 | y0 * 4, (s & 65535) << 16 | (t & 65535),
+                  (rng.choice((4096, 1024, -2048, 127)) & 65535) << 16 |
+                  (rng.choice((1024, -512, 33)) & 65535)]
+        submit(words + TEXTURE_SYNC)
+    records.append(vi(sequence, 2, TEXTURE_FB + 2, 63))
+    return serialize(records)
+
+
+def texture_intensity_copy_fixture(fmt: int, size: int = 1,
+                                   matrix: bool = False) -> bytes:
+    """IA8/I8 or IA16 copy rectangle with distinguishable source texels."""
+    width, height = ((32, 16) if matrix else (16, 4)) if size == 1 else \
+                    ((16, 8) if matrix else (8, 4))
+    if size == 1:
+        source = bytes((0x13 + y * 0x31 + x * 0x17 + x * y * 3) & 255
+                       for y in range(height) for x in range(width))
+    else:
+        source = b"".join(struct.pack(">H", 0x2180 + y * 0x100 + x * 0x11)
+                          for y in range(height) for x in range(width))
+    fb_width = 63 if matrix else width
+    destination = TEXTURE_FB + (2 if matrix else 0)
+    tile_line = width // (8 if size == 1 else 4)
+    records = [initial(4 << 20), memory(2, TEXTURE_SRC, source)]
+    if matrix:
+        records.append(memory(3, destination, b"\x6b\x5a" * (8192 * 64 // 2)))
+    words = (set_texture_image(fmt, size, width, TEXTURE_SRC) +
+             set_tile(0, fmt, size, tile_line, 0) +
+             load_tile(0, 0, 0, (width - 1) * 4, (height - 1) * 4) +
+             TEXTURE_SYNC)
+    rng = random.Random(0x1A110 + fmt * 17 + size)
+    for index in range(64 if matrix else 1):
+        fb = destination + (index * 8192 if matrix else 0)
+        x0, y0 = (1 + index % 7, 2 + index % 5) if matrix else (0, 0)
+        x1 = min(width - 1, x0 + (rng.randrange(8, 24) if matrix else width - 1))
+        y1 = min(height - 1, y0 + (rng.randrange(3, 9) if matrix else height - 1))
+        clip_x0 = x0 + (index % 3 if matrix else 0)
+        clip_y0 = y0 + (index % 2 if matrix else 0)
+        clip_x1 = min(width, x1 + 1 - (index % 2 if matrix else 0))
+        clip_y1 = min(height, y1 + 1)
+        shift_s = (index % 3) if matrix else 0
+        shift_t = (index // 3 % 3) if matrix else 0
+        mask_s = (index % 6) if matrix else 0
+        mask_t = (index % 4) if matrix else 0
+        modes = (shift_s | (mask_s << 4) | ((index & 1) << 8) |
+                 (shift_t << 10) | (mask_t << 14) | (((index >> 1) & 1) << 18))
+        tile = set_tile(0, fmt, size, tile_line, 0)
+        tile[1] |= modes
+        s = rng.randrange(0, 32 * 32) if matrix else 0
+        t = rng.randrange(0, 16 * 32) if matrix else 0
+        dsdx = rng.choice((4096, 2048, 1024, 511)) if matrix else 4096
+        dtdy = rng.choice((1024, 512, 2048)) if matrix else 1024
+        flip = bool(index & 1) if matrix else False
+        words += (set_image(2, fb, fb_width) + tile +
+                  [0xf2000000, ((width - 1) * 4 << 12) | ((height - 1) * 4)] +
+                  scissor(clip_x0 * 4, clip_y0 * 4, clip_x1 * 4, clip_y1 * 4) +
+                  [0xef200000, 0,
+                   (0xe5000000 if flip else 0xe4000000) | x1 * 4 << 12 | y1 * 4,
+                   x0 * 4 << 12 | y0 * 4, (s & 65535) << 16 | (t & 65535),
+                   (dsdx & 65535) << 16 | (dtdy & 65535)] + TEXTURE_SYNC)
+    records.extend([rdp(4, 0x100000, words), vi(5, 2, destination, fb_width)])
+    return serialize(records)
+
+
 def write_all(destination: pathlib.Path) -> None:
     destination.mkdir(parents=True, exist_ok=True)
     fixtures = {
@@ -423,9 +627,26 @@ def write_all(destination: pathlib.Path) -> None:
         "texture_ci8.aurcap": texture_8bit_fixture(2),
         "texture_ia8.aurcap": texture_8bit_fixture(3),
         "texture_i8.aurcap": texture_8bit_fixture(4),
+        "texture_ia16.aurcap": texture_ia16_fixture(),
         "texture_8bit_offset.aurcap": texture_8bit_offset_fixture(),
         "sampler_rgba16.aurcap": sampler_rgba16_fixture(),
         "sampler_rgba32.aurcap": sampler_rgba32_fixture(),
+        "texture_copy.aurcap": texture_copy_fixture(),
+        "texture_copy_matrix4.aurcap": texture_copy_fixture(4 << 20, True),
+        "texture_copy_matrix8.aurcap": texture_copy_fixture(8 << 20, True),
+        "texture_copy_feedback.aurcap": texture_copy_feedback_fixture(),
+        "texture_ci8_copy.aurcap": texture_indexed_fixture(8),
+        "texture_ci4_copy.aurcap": texture_indexed_fixture(4),
+        "texture_ci8_matrix.aurcap": texture_indexed_fixture(8, True),
+        "texture_ci4_matrix.aurcap": texture_indexed_fixture(4, True),
+        "texture_ci8_ports.aurcap": texture_indexed_fixture(8, bank_probe=True),
+        "texture_ci4_ports.aurcap": texture_indexed_fixture(4, bank_probe=True),
+        "texture_ia8_copy.aurcap": texture_intensity_copy_fixture(3),
+        "texture_i8_copy.aurcap": texture_intensity_copy_fixture(4),
+        "texture_ia16_copy.aurcap": texture_intensity_copy_fixture(3, 2),
+        "texture_ia8_matrix.aurcap": texture_intensity_copy_fixture(3, matrix=True),
+        "texture_i8_matrix.aurcap": texture_intensity_copy_fixture(4, matrix=True),
+        "texture_ia16_matrix.aurcap": texture_intensity_copy_fixture(3, 2, matrix=True),
     }
     for name, data in fixtures.items():
         (destination / name).write_bytes(data)

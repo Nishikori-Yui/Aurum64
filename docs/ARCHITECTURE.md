@@ -33,6 +33,103 @@ VI similarly snapshots RDRAM and completes scanout before publishing host pixels
 This is intentionally conservative and expensive. It avoids unsynchronized GPU
 writes into CPU-owned memory; it is not a zero-copy or optimized design.
 
+The video plugin owns a persistent 4 KiB TMEM store, cleared on new ROM/reset.
+LoadTile/Block/TLUT callbacks use the same bounded uploader as diagnostic replay.
+TextureRectangle/Flip snapshots carry their issue-time tile, scissor and raw
+OtherModes. The texture path accepts restricted integer-edge RGBA16 and CI4/CI8
+copy rectangles with an RGBA16 TLUT, IA16 copy rectangles, and a narrow IA8/I8
+copy envelope (zero S/T and tile origin, unit derivatives, no flip or tile
+addressing modes). IA8/I8 addressing variants outside that envelope remain Unsupported
+after a 64-case differential matrix exposed unresolved qword lane/bank behavior.
+A CPU planner validates the entire draw, maps supported qword coordinates and
+groups destinations by host word. The plan carries fetch selectors; a Metal
+kernel reads TMEM, performs indexed palette lookup or the currently validated
+IA/I conversion, applies the optional RGBA16 one-bit alpha comparison and writes
+both framebuffer lanes. The planner merges words shared by neighboring rows or
+odd framebuffer bases, so each GPU invocation has exclusive ownership.
+Unsupported draws leave RDRAM untouched. Completion and CPU readback precede
+subsequent uploads, which allows a rendered framebuffer to become a texture
+source. Point-cycle indexed sampling, other TLUT types, other
+indexed formats and filtering remain unsupported.
+
+Triangle commands snapshot framebuffer, scissor, OtherModes, combiner and
+primitive-color state at issue time. The decoder unpacks RGBA/STW/Z attribute
+origins and X/edge/Y derivatives for all eight payload combinations. The
+production callback accepts a restricted one-cycle RGBA16 Combiner subset:
+primitive, shade, point TEXEL0 and shade-times-TEXEL0 output. It requires cycle
+encoding 0, scissor mode 0, disabled dithering, blending, depth and AA. A
+deterministic threshold alpha compare using SetBlendColor is supported; random
+alpha dither remains rejected. Unsupported selectors fail closed. It evaluates both major-edge
+orientations and eight staggered coverage samples per pixel, retaining
+fractional scissor bounds. With AA disabled, the first sample controls writes;
+the framebuffer low bit encodes coverage rather than alpha. The CPU planner
+merges all writes to each host word before the Metal kernel. The Metal kernel
+evaluates the shared fixed-point Combiner per lane, including shade
+interpolation, RGBA16 point fetch and the supported selector equation.
+`ShadeMath.h` supplies the same unsigned-wrap arithmetic to C++ diagnostics
+and MSL. The row anchor, edge/Y correction, fractional-X correction, clipped
+X stepping and nine-bit clamp are all exercised against an external renderer,
+not merely against the shared helper.
+Independent CPU tests compare whole RDRAM and the complete hidden-state layer with
+the pinned reference, including a shade-times-TEXEL0 fixture. Metal replay also
+passes those independent differential fixtures. The selected RGBA16 TEXEL0 path
+supports point sampling with affine or perspective coordinates, and the
+Combiner can multiply it by interpolated shade. Z, LOD, filtering, alpha
+comparison with random dither and blending remain unsupported. The decoder
+snapshots the selected tile's
+format, stride, base, bounds and addressing modes. A preflight pass rejects
+unmodeled TMEM wrap before dispatch; Metal independently evaluates STW,
+perspective division, coordinate clamp/shift/mask/mirror and TMEM word fetch.
+Its 192-byte parameter block contains state/derivatives, not CPU-rendered RGB.
+
+`attributeRow`/`attributePixel` supply common quantized RGBA/STW/Z setup.
+Depth retains all X derivative bits, unlike the five-bit truncation for RGBA
+and STW. Texture division builds reciprocal segment endpoints from a rational
+curve with the independently checked segment-six quantization; no renderer
+lookup table is embedded. Intermediate attribute and divider probes invoke
+the pinned reference's real routines in the separate test executable.
+These stages have independent CPU and Metal differential evidence.
+Depth interpolation/clamping remains diagnostic for shaded/textured triangles.
+A restricted primitive-color RGBA16 depth path writes compressed Z
+from interpolated coefficients or SetPrimDepth, plus the high encoded delta-Z
+bits. SetPrimDepth is snapshotted even for triangle opcodes without a Z payload;
+its source-selection bit bypasses interpolated Z and uses the supplied delta.
+Color and Z must have matching word alignment and non-aliasing write-word sets;
+preflight rejects conflicting words before dispatch rather than allowing GPU
+write races. The 256-byte depth parameters carry coefficients and mode bits,
+not rendered Z. Opaque compare consumes compressed Z and hidden delta-Z;
+image-read enabled draws also consume the stored color coverage. Accumulated
+coverage overflow selects strict `incoming < stored`; other pixels use the
+delta tolerance, with the maximum-Z sentinel passing either branch. Compare
+failure preserves color, depth and hidden memory. Z update may be disabled.
+The planner keeps repeated pixel visits in row order for compare, and Metal
+evaluates these plans in one serial invocation, a correctness baseline rather
+than a performance claim. Update-only plans retain parallel word ownership.
+Other depth modes, two-cycle combiner, blender, LOD and filtered VI remain unfinished.
+
+The renderer owns one persistent hidden byte per guest halfword, represented
+as two physical bits or an unwritten marker (4), matching the reference export.
+Unwritten entries resolve from the current halfword low bit on reads; explicit
+RDP writes survive external RDRAM byte changes. Fill16/32 stores the replicated
+low bits, triangle color stores the coverage low bits, and Z update stores the
+encoded delta-Z low bits. The 44-byte triangle plan carries both lanes' hidden
+coverage. Each Metal invocation owns a hidden ushort paired with its RDRAM
+word; no adjacent threads read-modify-write the same hidden pair. Reset/new
+sessions clear this state, and synchronous completion precedes inspection.
+
+Copy-cycle byte-lane delayed hidden writes are not modeled yet: a copy draw
+invalidates hidden-layer export until reset, without changing existing color
+support. Command failures similarly invalidate the layer. Depth compare rejects
+such sessions before writes; a future VI-filter path must also refuse invalid
+state. CPU-originated hidden-bit bus
+effects, delayed write history and serialized restoration still need their own
+model and evidence; v1 memory records only replace visible RDRAM bytes.
+
+The isolated point-fetch helper also decodes IA8, IA16 and I8 from
+reference-verified TMEM layouts. This is a sampler/test capability only: those
+formats are not yet connected to Metal texture rectangles or the production
+RDP draw path.
+
 The MetalKit view uses the same compiled presentation shaders as the offscreen
 test. Its single shared texture is not updated until the previous GPU read has
 completed. Main-thread waits are an explicit temporary limitation, to be replaced
@@ -59,8 +156,19 @@ layer format for Aurum's supported fill path. Its current RDRAM result matches
 Angrylion on the generated fill fixture, including the submitted command bytes.
 Its direct VI layer follows the reference's active-area semantics (packed
 H/V start bounds, x/y scale dimensions, and filtered border crop) and now
-matches the 205x240 RGBA8 frames pixel-for-pixel. Missing hidden/TMEM/depth/
+matches the 205x240 RGBA8 frames pixel-for-pixel. Verified uploads emit TMEM;
+missing hidden/depth/
 coverage layers are reported as unavailable by the diff tool.
+
+`aurum-metal-replay` shares the capture reader, state checkpoints and diagnostic
+VI-color export, but dispatches fill/copy through the production Metal renderer.
+It has no software texture-draw fallback. Scalar replay still reports texture
+draws as unsupported. Independent differential fixtures check all framebuffer
+bytes and TMEM, including a draw-to-upload dependency within one submission.
+The neutral v1 state summary remains a comparison subset, not a full save state.
+For modeled fill/triangle sessions it also exports the entire `.hidden` layer.
+The mandatory `--require-hidden` differential option rejects absent files;
+unsupported sessions omit the layer and remove stale output at a reused prefix.
 
 ## Audio and controls
 
@@ -77,7 +185,8 @@ keys. Native settings replace SDL keybindings, which are disabled in the core.
 ## Deliberate omissions
 
 - CPU dynarec, RSP vector differential tests and cancellation inside an infinite RSP task.
-- Full RDP, hidden coverage/depth state, TMEM, VI filtering/interlace and accurate DP scheduling.
+- Full RDP, hidden coverage/depth state, remaining texture formats/filtering,
+  VI filtering/interlace and accurate DP scheduling.
 - Portable save states: core state alone omits the external decoder/renderer state.
 - Multiple controllers, remapping, rumble, VRU, netplay and 64DD.
 - Hardened-runtime signing, notarization, updater and public release pipeline.

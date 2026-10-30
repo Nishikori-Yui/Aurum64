@@ -6,6 +6,8 @@ import struct
 import sys
 
 words = []
+textured = "--texture" in sys.argv[2:] or "--ci-texture" in sys.argv[2:]
+ci_textured = "--ci-texture" in sys.argv[2:]
 def emit(word):
     words.append(word)
 def li(reg, value):
@@ -27,6 +29,52 @@ rdp = [
     0xF6000000 | (1276 << 12) | 956, 0,     # inclusive rectangle
     0xE9000000, 0,                         # full sync
 ]
+if textured:
+    if ci_textured:
+        # Original 8x8 CI8 checker plus a complete 256-entry RGBA16 palette.
+        li(8, 0xA0130000)
+        indices = [(x + y) & 1 for y in range(8) for x in range(8)]
+        for index in range(0, len(indices), 4):
+            value = sum(indices[index + lane] << (24 - lane * 8) for lane in range(4))
+            store(8, index, value)
+        li(8, 0xA0140000)
+        palette = [0x003e if index == 0 else 0xf801 if index == 1 else
+                   (((index * 7 & 31) << 11) | ((index * 3 & 31) << 6) |
+                    ((index >> 3 & 31) << 1)) for index in range(256)]
+        for index in range(0, len(palette), 2):
+            store(8, index * 2, palette[index] << 16 | palette[index + 1])
+    else:
+        # Original RGBA16 checker with one-bit alpha coverage.
+        li(8, 0xA0130000)
+        texels = [((0xf800 if x < 4 else 0x07c0) if y < 4 else
+                   (0x003e if x < 4 else 0xfffe)) | ((x + y) & 1)
+                  for y in range(8) for x in range(8)]
+        for index in range(0, len(texels), 2):
+            store(8, index * 2, texels[index] << 16 | texels[index + 1])
+    li(8, 0xA0100000)
+    texture_commands = []
+    if ci_textured:
+        texture_commands += [
+            0xFD1000FF, 0x00140000,        # RGBA16 palette image, 256 entries
+            0xF5000100, 7 << 24,           # palette tile, packed entry layout
+            0xF0000000, (7 << 24) | (1020 << 12), # LoadTLUT to upper TMEM
+            0xFD480007, 0x00130000,        # CI8 source, stride 8
+            0xF5480200, (3 << 4) | (3 << 14), # CI8 tile, line 1, wrap 8x8
+            0xF4000000, (28 << 12) | 28,   # LoadTile 8x8 indices
+            0xF2000000, (28 << 12) | 28,   # tile bounds
+        ]
+    else:
+        texture_commands += [
+            0xFD100007, 0x00130000,        # RGBA16 source, stride 8
+            0xF5100400, (3 << 4) | (3 << 14), # tile line 2, mask 3 on S/T
+            0xF4000000, (28 << 12) | 28,   # LoadTile 8x8
+        ]
+    texture_commands += [
+        (0xEF208000 if ci_textured else 0xEF200000), 1, # copy; TLUT only for CI, alpha compare
+        0xE4000000 | (1244 << 12) | 924, (32 << 12) | 32,
+        0, (4096 << 16) | 1024,
+    ]
+    rdp[-2:-2] = texture_commands
 for offset, word in enumerate(rdp):
     store(8, offset * 4, word)
 li(8, 0xA4100000)
@@ -69,7 +117,9 @@ emit(0x1000FFFF)  # beq zero, zero, self
 emit(0)
 rom = bytearray(4096)
 struct.pack_into(">4I", rom, 0, 0x80371240, 0xF, 0xA4000040, 0)
-rom[0x20:0x34] = b"AURUM OPEN TEST ROM".ljust(20, b" ")
+rom[0x20:0x34] = (b"AURUM CI8 TEST" if ci_textured else
+                   b"AURUM TEXTURE TEST" if textured else
+                   b"AURUM OPEN TEST ROM").ljust(20, b" ")
 rom[0x3E] = ord("E")
 for i, word in enumerate(words):
     struct.pack_into(">I", rom, 0x40 + i * 4, word)

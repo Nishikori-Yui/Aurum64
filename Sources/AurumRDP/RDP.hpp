@@ -21,8 +21,7 @@ struct TextureLoad {
     uint32_t dxt = 0;      // LoadBlock only
 };
 // A decoded TextureRectangle/TextureRectangleFlip (opcode 0x24/0x25). The
-// framebuffer, tile descriptor and tile size come from the decoder state at the
-// time of the command, so only the command's own fields are carried here.
+// framebuffer, tile descriptor and tile size are copied at command issue time.
 struct TextureRect {
     uint32_t tile = 0;
     uint32_t xh = 0, yh = 0, xl = 0, yl = 0;   // raw 12-bit edge fields
@@ -34,10 +33,46 @@ struct TextureRect {
     uint32_t fbFormat = 0, fbSize = 0, fbWidth = 0, fbAddress = 0;
     uint32_t tileFormat = 0, tileSize = 0, tileLine = 0, tileTmem = 0;
     uint32_t tileSl = 0, tileTl = 0, tileSh = 0, tileTh = 0;
-    // SetTile word-1 bits below the tile index: ct/mt/mask_t/shift_t/cs/ms/
-    // mask_s/shift_s. Non-zero means a coordinate mode this decoder does not
-    // model, so renderers must reject rather than approximate.
+    // SetTile word-1 below the tile index: palette/ct/mt/mask_t/shift_t/cs/ms/
+    // mask_s/shift_s. Consumers must validate format/palette and cycle support.
     uint32_t tileModes = 0;
+    uint32_t clipXh = 0, clipYh = 0, clipXl = 0, clipYl = 0;
+    uint32_t scissorMode = 0, otherModesHi = 0, otherModesLo = 0;
+};
+struct TriangleAttribute {
+    // Raw signed fixed-point coefficients; quantization belongs to the stage
+    // consuming them (color, texture or depth), not command decoding.
+    int32_t initial = 0, dx = 0, de = 0, dy = 0;
+    bool operator==(const TriangleAttribute&) const = default;
+};
+struct Triangle {
+    uint32_t opcode = 0;
+    uint32_t wordCount = 0;
+    bool shade = false, texture = false, z = false;
+    bool leftMajor = false;
+    bool majorSlopeNegative = false;
+    uint32_t tile = 0, level = 0;
+    int32_t yl = 0, ym = 0, yh = 0;
+    int32_t xl = 0, dxldy = 0, xh = 0, dxhdy = 0, xm = 0, dxmdy = 0;
+    std::array<TriangleAttribute, 4> rgba{};
+    std::array<TriangleAttribute, 3> stw{};
+    TriangleAttribute depth{};
+    uint32_t tileFormat = 0, tileSize = 0, tileLine = 0, tileTmem = 0;
+    uint32_t tileSl = 0, tileTl = 0, tileSh = 0, tileTh = 0, tileModes = 0;
+    uint32_t zbAddress = 0;
+    uint32_t primitiveDepth = 0;
+    bool primitiveDepthValid = false;
+    uint32_t cycleType = 0;
+    uint32_t fbFormat = 0, fbSize = 0, fbWidth = 0, fbAddress = 0;
+    uint32_t clipXh = 0, clipYh = 0, clipXl = 0, clipYl = 0;
+    uint32_t scissorMode = 0, otherModesHi = 0, otherModesLo = 0;
+    uint32_t combineHi = 0, combineLo = 0;
+    bool combineValid = false;
+    uint32_t primitiveColor = 0;
+    bool primitiveColorValid = false;
+    uint32_t blendColor = 0;
+    bool blendColorValid = false;
+    std::array<uint32_t, 44> words{};
 };
 struct UnsupportedContext {
     uint32_t valid = 0, opcode = 0, wordCount = 0, capturedWords = 0;
@@ -67,6 +102,7 @@ public:
     // Returns true when the rectangle was rendered. A rejected or missing
     // handler is reported as unsupported rather than silently ignored.
     std::function<bool(const TextureRect&)> textureRect;
+    std::function<bool(const Triangle&)> triangle;
     std::function<void()> sync;
     uint64_t commands = 0, unsupported = 0;
     uint64_t opcodeCount(uint8_t opcode) const;
@@ -114,10 +150,19 @@ private:
     uint32_t address = 0, width = 0, size = 0, format = 0, color = 0, cycle = 0;
     uint32_t imageReadEn = 0, zUpdateEn = 0, zCompareEn = 0;
     uint32_t tiFormat = 0, tiSize = 0, tiWidth = 0, tiAddress = 0, zbAddress = 0;
+    uint32_t primitiveDepth = 0;
+    bool primitiveDepthValid = false;
+    uint32_t primitiveColor = 0;
+    bool primitiveColorValid = false;
+    uint32_t blendColor = 0;
+    bool blendColorValid = false;
+    uint32_t combineHi = 0, combineLo = 0;
+    bool combineValid = false;
     std::array<uint32_t, 32> tiles{};
     std::array<uint32_t, 32> tileSizes_{};
     std::array<uint32_t, 8> tileModes_{};
     uint32_t sx0 = 0, sy0 = 0, sx1 = 0, sy1 = 0;
+    uint32_t scissorMode = 0, otherModesHi = 0, otherModesLo = 0;
     void markUnsupported(std::span<const uint32_t> words);
 };
 }

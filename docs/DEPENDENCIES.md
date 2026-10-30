@@ -63,7 +63,21 @@ upstream MAME notice; original adapter code cannot be labeled MIT on behalf of
 upstream files. Reference output files are test data generated from original
 ROMs and do not redistribute upstream source.
 
+The 2026-10-26 texture-copy implementation studies the pinned reference's
+qword fetch, copy rasterization and coordinate behavior. Aurum's address-only CPU
+plan and host-word-owned Metal kernel are original implementations; no upstream
+renderer bodies were transplanted. Original fixture generation and separate
+reference execution verify the resulting RDRAM/TMEM bytes. Angrylion remains
+excluded from the production app.
+
 ## Evaluated alternatives
+
+The triangle-stage adapters call the pinned reference's triangle handlers,
+export its real span registers and invoke its TC divider. These development
+probes are not part of the application. Production attribute/texture math is
+independently implemented and checked via neutral binary input/output; the
+reciprocal segments are generated arithmetically rather than copying an
+upstream table. Passing the reference tests is not a claim of hardware truth.
 
 - [paraLLEl-RDP](https://github.com/Themaister/parallel-rdp): MIT/Vulkan compute
   with MIT Granite and MAME Angrylion submodules; see the exact pins above.

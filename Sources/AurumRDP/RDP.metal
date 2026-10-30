@@ -1,15 +1,250 @@
 // SPDX-License-Identifier: MIT
 #include <metal_stdlib>
 using namespace metal;
+#include "ShadeMath.h"
+#include "CombinerMath.h"
+#include "TriangleTextureMath.h"
+#include "TriangleColorMath.h"
+#include "DepthMath.h"
+#include "TriangleDepthMath.h"
+#include "HiddenMath.h"
 struct Fill { uint address, width, size, color, x0, y0, x1, y1; };
 struct Scanout { uint origin, stride, size, width, height, xScale, yScale, xOffset, yOffset, length; };
+struct CopyWord { uint word, high, low; };
+struct TriangleWord {
+    uint word, high, low;
+    int highX, highY, highStart, lowX, lowY, lowStart;
+    uint highHidden, lowHidden;
+};
+static_assert(sizeof(TriangleWord) == 44);
+static_assert(sizeof(ShadeParameters) == 84);
+static_assert(sizeof(TriangleTextureParameters) == 192);
+static_assert(sizeof(TriangleColorParameters) == 212);
+static_assert(sizeof(TriangleDepthParameters) == 256);
+
+inline void depthWord(device uint* ram, device const TriangleWord* plan,
+                      constant TriangleDepthParameters& parameters,
+                      device ushort* hidden, uint index) {
+    TriangleWord item = plan[index];
+    uint colorWord = ram[item.word];
+    uint colorHidden = hidden[item.word], zHidden = 0;
+    uint zWord = 0;
+    uint zWordIndex = 0xffffffffu;
+    bool haveZWord = false;
+    const CombinerColor primitive = primitiveCombinerColor(parameters.color.primitiveColor);
+    const uint color = simpleCombinerRGBA16(parameters.color.combineHi, parameters.color.combineLo,
+                                            CombinerColor{}, CombinerColor{}, primitive);
+    const auto readZ = [&](int x, int y, thread uint& address, thread uint& stored) {
+        address = parameters.zbAddress + (uint(y) * parameters.zbWidth + uint(x)) * 2u;
+        zWordIndex = address >> 2;
+        if (!haveZWord) {
+            zWord = ram[zWordIndex];
+            zHidden = hidden[zWordIndex];
+            haveZWord = true;
+        }
+        const uint shift = (((address >> 1) ^ 1u) & 1u) * 16u;
+        stored = (zWord >> shift) & 0xffffu;
+        return shift;
+    };
+    const auto writeLane = [&](int x, int y, int start, uint value, bool highLane,
+                               thread uint& destination) {
+        uint address = 0, stored = 0;
+        const uint shift = readZ(x, y, address, stored);
+        const uint incoming = triangleDepthValue(parameters, x, y, start);
+        const uint coverageLow = highLane ? item.highHidden : item.lowHidden;
+        const uint coverage = ((value & 1u) << 2) + coverageLow + 1u;
+        const uint oldColor = highLane ? destination >> 16 : destination & 0xffffu;
+        const uint oldHidden = (colorHidden >> (highLane ? 0u : 8u)) & 0xffu;
+        const uint oldZHidden = (zHidden >> (((address >> 1) & 1u) * 8u)) & 0xffu;
+        if (!triangleDepthPass(parameters, incoming, stored, oldZHidden,
+                               oldColor, oldHidden, coverage)) return;
+        colorHidden = hiddenWriteLane(colorHidden, highLane ? 0u : 1u,
+                                      coverageLow);
+        const uint pixel = color | (value & 1u);
+        if (highLane)
+            destination = (destination & 0xffffu) | (pixel << 16);
+        else
+            destination = (destination & 0xffff0000u) | pixel;
+        if (parameters.modes & 0x20u) {
+            zHidden = hiddenWriteLane(zHidden, (address >> 1) & 1u, parameters.dzEncoded);
+            const uint zValue = depthCompress(incoming) | (parameters.dzEncoded >> 2);
+            zWord = (zWord & ~(0xffffu << shift)) | (zValue << shift);
+        }
+    };
+    if (item.high != 0xffffffffu)
+        writeLane(item.highX, item.highY, item.highStart, item.high, true, colorWord);
+    if (item.low != 0xffffffffu)
+        writeLane(item.lowX, item.lowY, item.lowStart, item.low, false, colorWord);
+    ram[item.word] = colorWord;
+    hidden[item.word] = ushort(colorHidden);
+    if (haveZWord && (parameters.modes & 0x20u)) {
+        ram[zWordIndex] = zWord;
+        hidden[zWordIndex] = ushort(zHidden);
+    }
+}
+
+kernel void triangleDepth(device uint* ram [[buffer(0)]],
+                          device const TriangleWord* plan [[buffer(1)]],
+                          constant TriangleDepthParameters& parameters [[buffer(2)]],
+                          device ushort* hidden [[buffer(3)]],
+                          constant uint& count [[buffer(4)]],
+                          uint index [[thread_position_in_grid]]) {
+    // Compare consumes earlier pixel writes. Preserve ordered visits even when
+    // a small framebuffer stride makes different rows hit the same address.
+    if (parameters.modes & 0x10u) {
+        if (index == 0) for (uint i = 0; i < count; ++i) depthWord(ram, plan, parameters, hidden, i);
+    } else {
+        depthWord(ram, plan, parameters, hidden, index);
+    }
+}
+
+kernel void triangleColor(device uint* ram [[buffer(0)]],
+                          device const TriangleWord* plan [[buffer(1)]],
+                          device const ushort* tmem [[buffer(2)]],
+                          constant TriangleColorParameters& parameters [[buffer(3)]],
+                          device ushort* hidden [[buffer(4)]],
+                          uint index [[thread_position_in_grid]]) {
+    TriangleWord item = plan[index];
+    const CombinerColor primitive = primitiveCombinerColor(parameters.primitiveColor);
+    const auto write = [&](int x, int y, int start, thread uint& destination) {
+        const CombinerColor shade = (parameters.flags & 1u)
+            ? shadeCombinerColor(parameters.texture.setup, x, y, start) : CombinerColor{};
+        CombinerColor texel{};
+        if (parameters.flags & 2u) {
+            const uint source = triangleTextureIndex(parameters.texture, x, y, start);
+            const uint value = uint(tmem[source]);
+            const auto expand = [](uint channel) { return (channel << 3) | (channel >> 2); };
+            texel = {expand((value >> 11) & 31u), expand((value >> 6) & 31u),
+                     expand((value >> 1) & 31u), (value & 1u) ? 255u : 0u};
+        }
+        const CombinerColor color = simpleCombinerColor(parameters.combineHi, parameters.combineLo,
+                                                        texel, shade, primitive);
+        if ((parameters.flags & 4u) && color.a < (parameters.blendColor & 0xffu)) return false;
+        destination = ((color.r >> 3) << 11) | ((color.g >> 3) << 6) | ((color.b >> 3) << 1);
+        return true;
+    };
+    if (item.high != 0xffffffffu) {
+        uint value = 0;
+        if (write(item.highX, item.highY, item.highStart, value))
+            item.high = value | (item.high & 1u);
+        else
+            item.high = 0xffffffffu;
+    }
+    if (item.low != 0xffffffffu) {
+        uint value = 0;
+        if (write(item.lowX, item.lowY, item.lowStart, value))
+            item.low = value | (item.low & 1u);
+        else
+            item.low = 0xffffffffu;
+    }
+    uint value = ram[item.word];
+    if (item.high != 0xffffffffu) value = (value & 0x0000ffffu) | (item.high << 16);
+    if (item.low != 0xffffffffu) value = (value & 0xffff0000u) | item.low;
+    ram[item.word] = value;
+    uint bits = hidden[item.word];
+    if (item.high != 0xffffffffu) bits = hiddenWriteLane(bits, 0, item.highHidden);
+    if (item.low != 0xffffffffu) bits = hiddenWriteLane(bits, 1, item.lowHidden);
+    hidden[item.word] = ushort(bits);
+}
+
+kernel void triangleTexture(device uint* ram [[buffer(0)]],
+                            device const TriangleWord* plan [[buffer(1)]],
+                            device const ushort* tmem [[buffer(2)]],
+                            constant TriangleTextureParameters& parameters [[buffer(3)]],
+                            device ushort* hidden [[buffer(4)]],
+                            uint index [[thread_position_in_grid]]) {
+    TriangleWord item = plan[index];
+    if (item.high != 0xffffffffu) {
+        const uint source = triangleTextureIndex(parameters, item.highX, item.highY, item.highStart);
+        item.high = (uint(tmem[source]) & 0xfffeu) | (item.high & 1u);
+    }
+    if (item.low != 0xffffffffu) {
+        const uint source = triangleTextureIndex(parameters, item.lowX, item.lowY, item.lowStart);
+        item.low = (uint(tmem[source]) & 0xfffeu) | (item.low & 1u);
+    }
+    uint value = ram[item.word];
+    if (item.high != 0xffffffffu) value = (value & 0xffffu) | (item.high << 16);
+    if (item.low != 0xffffffffu) value = (value & 0xffff0000u) | item.low;
+    ram[item.word] = value;
+    uint bits = hidden[item.word];
+    if (item.high != 0xffffffffu) bits = hiddenWriteLane(bits, 0, item.highHidden);
+    if (item.low != 0xffffffffu) bits = hiddenWriteLane(bits, 1, item.lowHidden);
+    hidden[item.word] = ushort(bits);
+}
+
+kernel void triangleFill(device uint* ram [[buffer(0)]],
+                         device const TriangleWord* plan [[buffer(1)]],
+                         constant ShadeParameters& shade [[buffer(2)]],
+                         constant uint& shaded [[buffer(3)]],
+                         device ushort* hidden [[buffer(4)]],
+                         uint index [[thread_position_in_grid]]) {
+    TriangleWord item = plan[index];
+    if (shaded) {
+        if (item.high != 0xffffffffu)
+            item.high = shadeRGB16(shade, item.highX, item.highY, item.highStart) | (item.high & 1u);
+        if (item.low != 0xffffffffu)
+            item.low = shadeRGB16(shade, item.lowX, item.lowY, item.lowStart) | (item.low & 1u);
+    }
+    uint value = ram[item.word];
+    if (item.high != 0xffffffffu)
+        value = (value & 0x0000ffffu) | (item.high << 16);
+    if (item.low != 0xffffffffu)
+        value = (value & 0xffff0000u) | item.low;
+    ram[item.word] = value;
+    uint bits = hidden[item.word];
+    if (item.high != 0xffffffffu) bits = hiddenWriteLane(bits, 0, item.highHidden);
+    if (item.low != 0xffffffffu) bits = hiddenWriteLane(bits, 1, item.lowHidden);
+    hidden[item.word] = ushort(bits);
+}
+
+kernel void textureCopy(device uint* ram [[buffer(0)]], device const ushort* tmem [[buffer(1)]],
+                        device const CopyWord* plan [[buffer(2)]],
+                        constant uint& options [[buffer(3)]],
+                        uint index [[thread_position_in_grid]]) {
+    CopyWord item = plan[index];
+    uint value = ram[item.word];
+    for (uint lane = 0; lane < 2; ++lane) {
+        uint source = lane == 0 ? item.high : item.low;
+        if (source == 0xffffffffu) continue;
+        uint texel;
+        if (options & 8u) {
+            device const uchar* bytes = reinterpret_cast<device const uchar*>(tmem);
+            uint first = bytes[source & 4095u];
+            uint second = bytes[(source >> 16) & 4095u];
+            if (options & 16u) {
+                first = ((first >> 4) & 15u) * 17u;
+                second = ((second >> 4) & 15u) * 17u;
+            }
+            uint pair = (first << 8) | second;
+            if (source & (1u << 31)) {
+                first = bytes[source & 4095u];
+                second = bytes[(source >> 16) & 4095u];
+                pair = (first << 8) | second;
+            }
+            texel = pair;
+        } else if (options & 2u) {
+            device const uchar* bytes = reinterpret_cast<device const uchar*>(tmem);
+            uint entry = bytes[source & 4095u];
+            if (options & 4u)
+                entry = ((entry >> ((source & (1u << 14)) ? 0 : 4)) & 15u) |
+                        (((options >> 8) & 15u) << 4);
+            texel = tmem[1024u + entry * 4u + ((source >> 12) & 3u)];
+        } else texel = tmem[source];
+        if ((options & 1u) && !(texel & 1u)) continue;
+        uint shift = lane == 0 ? 16 : 0;
+        value = (value & ~(65535u << shift)) | (texel << shift);
+    }
+    ram[item.word] = value;
+}
 
 kernel void fillRectangle(device uint* ram [[buffer(0)]], constant Fill& f [[buffer(1)]],
-                          constant uint& length [[buffer(2)]], uint word [[thread_position_in_grid]]) {
+                          constant uint& length [[buffer(2)]],
+                          device ushort* hidden [[buffer(3)]], uint word [[thread_position_in_grid]]) {
     // One invocation owns a complete host word, avoiding overlapping 16-bit stores.
     uint address = word * 4;
     if (address + 4 > length) return;
     uint result = ram[word];
+    uint bits = hidden[word];
     uint count = f.size == 2 ? 2 : 1;
     uint bytes = f.size == 2 ? 2 : 4;
     for (uint lane = 0; lane < count; ++lane) {
@@ -18,16 +253,22 @@ kernel void fillRectangle(device uint* ram [[buffer(0)]], constant Fill& f [[buf
         uint pixel = (pixelAddress - f.address) / bytes;
         uint x = pixel % f.width, y = pixel / f.width;
         if (x < f.x0 || x >= f.x1 || y < f.y0 || y >= f.y1) continue;
-        if (count == 1) result = f.color;
+        if (count == 1) {
+            result = f.color;
+            bits = hiddenWriteLane(bits, 0, (f.color & 0x10000u) ? 3u : 0u);
+            bits = hiddenWriteLane(bits, 1, (f.color & 1u) ? 3u : 0u);
+        }
         else {
             uint halfIndex = pixelAddress >> 1;
             uint hostHalf = halfIndex ^ 1;
             uint shift = (hostHalf & 1) * 16;
             uint fillHalf = (f.color >> ((halfIndex & 1) ? 0 : 16)) & 65535u;
             result = (result & ~(65535u << shift)) | (fillHalf << shift);
+            bits = hiddenWriteLane(bits, lane, (fillHalf & 1u) ? 3u : 0u);
         }
     }
     ram[word] = result;
+    hidden[word] = ushort(bits);
 }
 kernel void scanout(device const uint* ram [[buffer(0)]], device uint* output [[buffer(1)]],
                     constant Scanout& s [[buffer(2)]], uint2 p [[thread_position_in_grid]]) {

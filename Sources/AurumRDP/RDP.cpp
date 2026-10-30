@@ -2,9 +2,64 @@
 #include "RDP.hpp"
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <limits>
 
 namespace aurum::rdp {
+namespace {
+int32_t signExtend(uint32_t value, unsigned bits) {
+    const uint32_t sign = 1u << (bits - 1);
+    const uint32_t mask = (1u << bits) - 1;
+    value &= mask;
+    return static_cast<int32_t>((value ^ sign) - sign);
+}
+
+Triangle decodeTriangle(std::span<const uint32_t> words) {
+    Triangle result;
+    result.opcode = (words[0] >> 24) & 63;
+    result.wordCount = static_cast<uint32_t>(words.size());
+    result.shade = (result.opcode & 4u) != 0;
+    result.texture = (result.opcode & 2u) != 0;
+    result.z = (result.opcode & 1u) != 0;
+    result.leftMajor = (words[0] & 0x00800000u) != 0;
+    result.majorSlopeNegative = (words[5] & 0x80000000u) != 0;
+    result.tile = (words[0] >> 16) & 7;
+    result.level = (words[0] >> 19) & 7;
+    result.yl = signExtend(words[0], 14);
+    result.ym = signExtend(words[1] >> 16, 14);
+    result.yh = signExtend(words[1], 14);
+    result.xl = signExtend(words[2], 28);
+    result.dxldy = signExtend(words[3], 30);
+    result.xh = signExtend(words[4], 28);
+    result.dxhdy = signExtend(words[5], 30);
+    result.xm = signExtend(words[6], 28);
+    result.dxmdy = signExtend(words[7], 30);
+    size_t offset = 8;
+    // Attribute blocks interleave pairs of integer halves, then their
+    // fractional halves four words later. Block order is shade, texture, Z.
+    const auto unpack = [&](auto& attributes) {
+        for (size_t channel = 0; channel < attributes.size(); ++channel) {
+            const auto field = [&](size_t group) {
+                const unsigned shift = channel & 1 ? 0 : 16;
+                const size_t index = offset + group + channel / 2;
+                const uint32_t high = (words[index] >> shift) & 0xffffu;
+                const uint32_t low = (words[index + 4] >> shift) & 0xffffu;
+                return std::bit_cast<int32_t>((high << 16) | low);
+            };
+            attributes[channel] = {field(0), field(2), field(8), field(10)};
+        }
+        offset += 16;
+    };
+    if (result.shade) unpack(result.rgba);
+    if (result.texture) unpack(result.stw);
+    if (result.z) result.depth = {
+        std::bit_cast<int32_t>(words[offset]), std::bit_cast<int32_t>(words[offset + 1]),
+        std::bit_cast<int32_t>(words[offset + 2]), std::bit_cast<int32_t>(words[offset + 3])};
+    std::copy(words.begin(), words.end(), result.words.begin());
+    return result;
+}
+} // namespace
+
 std::array<uint32_t, 64> StateSnapshot::words() const {
     std::array<uint32_t, 64> result{};
     result[0] = fbFormat; result[1] = fbSize; result[2] = fbWidth; result[3] = fbAddress;
@@ -56,10 +111,19 @@ void Decoder::reset() {
     address = width = size = format = color = cycle = 0;
     imageReadEn = zUpdateEn = zCompareEn = 0;
     tiFormat = tiSize = tiWidth = tiAddress = zbAddress = 0;
+    primitiveDepth = 0;
+    primitiveDepthValid = false;
+    primitiveColor = 0;
+    primitiveColorValid = false;
+    blendColor = 0;
+    blendColorValid = false;
+    combineHi = combineLo = 0;
+    combineValid = false;
     tiles.fill(0);
     tileSizes_.fill(0);
     tileModes_.fill(0);
     sx0 = sy0 = sx1 = sy1 = 0;
+    scissorMode = otherModesHi = otherModesLo = 0;
     haveState = false;
 }
 uint64_t Decoder::opcodeCount(uint8_t opcode) const {
@@ -120,15 +184,35 @@ void Decoder::execute(std::span<const uint32_t> w) {
     case 0x2d:
         sx0 = (a >> 12) & 4095; sy0 = a & 4095;
         sx1 = (b >> 12) & 4095; sy1 = b & 4095;
+        scissorMode = (b >> 24) & 3;
         // Field/interlace scissoring is not implemented.
         if (b & 0x03000000) markUnsupported(w);
         haveState = true;
         break;
     case 0x2f:
+        otherModesHi = a & 0xffffff;
+        otherModesLo = b;
         cycle = (a >> 20) & 3;
         imageReadEn = (b >> 6) & 1;
         zUpdateEn = (b >> 5) & 1;
         zCompareEn = (b >> 4) & 1;
+        break;
+    case 0x3a:
+        primitiveColor = b;
+        primitiveColorValid = true;
+        break;
+    case 0x2e:
+        primitiveDepth = b;
+        primitiveDepthValid = true;
+        break;
+    case 0x39:
+        blendColor = b;
+        blendColorValid = true;
+        break;
+    case 0x3c:
+        combineHi = a & 0x00ffffffu;
+        combineLo = b;
+        combineValid = true;
         break;
     case 0x32: {
         const uint32_t tile = (b >> 24) & 7;
@@ -167,6 +251,12 @@ void Decoder::execute(std::span<const uint32_t> w) {
         load.tl = a & 0xfff;
         load.sh = (b >> 12) & 0xfff;
         load.th = b & 0xfff;
+        // LoadTile/LoadBlock/LoadTLUT also replace this tile's bounds, even
+        // when the upload handler is unavailable. Later draws see that state.
+        tileSizes_[tile * 4 + 0] = load.sl;
+        tileSizes_[tile * 4 + 1] = load.tl;
+        tileSizes_[tile * 4 + 2] = load.sh;
+        tileSizes_[tile * 4 + 3] = load.th;
         if (opcode == 0x33) load.dxt = load.th;
         if (!textureLoad || !textureLoad(load)) markUnsupported(w);
         break;
@@ -196,7 +286,47 @@ void Decoder::execute(std::span<const uint32_t> w) {
         rect.tileSh = tileSizes_[rect.tile * 4 + 2];
         rect.tileTh = tileSizes_[rect.tile * 4 + 3];
         rect.tileModes = tileModes_[rect.tile];
+        rect.clipXh = sx0; rect.clipYh = sy0; rect.clipXl = sx1; rect.clipYl = sy1;
+        rect.scissorMode = scissorMode;
+        rect.otherModesHi = otherModesHi; rect.otherModesLo = otherModesLo;
         if (!textureRect || !textureRect(rect)) markUnsupported(w);
+        break;
+    }
+    case 0x08: case 0x09: case 0x0a: case 0x0b:
+    case 0x0c: case 0x0d: case 0x0e: case 0x0f: {
+        Triangle triangle = decodeTriangle(w);
+        triangle.tileFormat = tiles[triangle.tile * 4];
+        triangle.tileSize = tiles[triangle.tile * 4 + 1];
+        triangle.tileLine = tiles[triangle.tile * 4 + 2];
+        triangle.tileTmem = tiles[triangle.tile * 4 + 3];
+        triangle.tileSl = tileSizes_[triangle.tile * 4];
+        triangle.tileTl = tileSizes_[triangle.tile * 4 + 1];
+        triangle.tileSh = tileSizes_[triangle.tile * 4 + 2];
+        triangle.tileTh = tileSizes_[triangle.tile * 4 + 3];
+        triangle.tileModes = tileModes_[triangle.tile];
+        triangle.zbAddress = zbAddress;
+        triangle.primitiveDepth = primitiveDepth;
+        triangle.primitiveDepthValid = primitiveDepthValid;
+        triangle.cycleType = cycle;
+        triangle.fbFormat = format;
+        triangle.fbSize = size;
+        triangle.fbWidth = width;
+        triangle.fbAddress = address;
+        triangle.clipXh = sx0;
+        triangle.clipYh = sy0;
+        triangle.clipXl = sx1;
+        triangle.clipYl = sy1;
+        triangle.scissorMode = scissorMode;
+        triangle.otherModesHi = otherModesHi;
+        triangle.otherModesLo = otherModesLo;
+        triangle.combineHi = combineHi;
+        triangle.combineLo = combineLo;
+        triangle.combineValid = combineValid;
+        triangle.primitiveColor = primitiveColor;
+        triangle.primitiveColorValid = primitiveColorValid;
+        triangle.blendColor = blendColor;
+        triangle.blendColorValid = blendColorValid;
+        if (!this->triangle || !this->triangle(triangle)) markUnsupported(w);
         break;
     }
     case 0x37: color = b; break;

@@ -5,9 +5,25 @@ milestone integrates Mupen64Plus, a low-level CXD4 RSP, a native SwiftUI/AppKit
 shell, Core Audio, GameController and an independent Metal compute renderer.
 
 **This is an early emulator implementation, not a game-compatible release.**
-The renderer implements fill-cycle RGBA16/RGBA32 rectangles and basic VI scanout.
-Triangles, TMEM/textures, combiner, blender, depth, coverage and accurate VI
-filters are not implemented. The CPU uses the cached interpreter, not a JIT.
+The renderer implements fill-cycle RGBA16/RGBA32 rectangles, restricted
+RGBA16/CI4/CI8 copy-cycle texture rectangles with RGBA16 TLUT, IA16 copy
+rectangles, and a narrower IA8/I8 copy envelope with zero S/T origin, unit
+derivatives, no flip and default tile addressing. Unsupported IA8/I8 address
+variants are rejected. The renderer also has basic VI scanout. TMEM uploads and
+signed point/copy coordinates have independent reference tests. Strictly gated
+one-cycle RGBA16 triangle modes now share a Combiner path for primitive,
+interpolated shade, point TEXEL0 and shade-times-TEXEL0 output, including
+affine/perspective texture coordinates and threshold alpha compare without
+random dither. A narrow RGBA16 depth-update triangle path also writes the
+reference-compatible compressed Z value from interpolated Z or SetPrimDepth,
+including encoded delta-Z high bits. Fill and triangle draws also preserve
+hidden coverage and delta-Z low bits across submissions. Opaque Z compare now
+uses stored depth/delta and coverage, with optional Z update and image read.
+Other depth modes, Blender,
+copy hidden-write semantics, additional combiner modes, filtered textures and accurate VI filters
+remain unfinished. CPU and Metal evaluation have independent reference tests.
+The CPU uses the cached
+interpreter, not a JIT.
 There is no claim of real-time performance or commercial-game compatibility.
 
 ## Build and run
@@ -49,9 +65,18 @@ core but game-driven persistence still needs validation.
 - C++ RDP decoder: partial commands, triangle/rectangle command lengths,
   unsupported-command counters, fill/scissor bounds and invalid-input handling.
 - Metal: RGBA16/RGBA32 fills, 48 seeded randomized comparisons with our scalar
-  byte-address reference, VI color conversion/blanking and offscreen presentation.
+  byte-address reference, 391 original RGBA16/CI4/CI8 copy draws compared with a
+  separate pinned reference process, VI color conversion/blanking and offscreen presentation.
+- CPU triangle differential: flat, shade, point TEXEL0 and shade-times-TEXEL0
+  one-cycle RGBA16 fixtures, plus threshold alpha-compare cases, compare whole
+  RDRAM and the full hidden-state layer against the separate reference process. The
+  restricted depth fixtures also compare color, compressed Z, and opaque
+  compare decisions with update/image-read enabled or disabled;
+  Metal replay requires both layers, including untouched hidden bytes and delta-Z.
 - Original generated ROM: CPU boot without proprietary IPL3, RDP DMA, Metal
   rendering, a small scalar RSP program, silent AI DMA and exact full-frame pixels.
+  Texture variants also exercise production LoadTile, RGBA16 TLUT upload, CI8
+  palette lookup, copy and alpha rejection.
 - Lifecycle: invalid ROM recovery, all three ROM byte orders, 4 MiB RDRAM, repeated sessions,
   input mailbox, pause/resume/reset, stop while paused and stop without VI.
 - Bundle relocation: smoke test outside the repository, actual dyld-load audit,
@@ -82,6 +107,7 @@ Nintendo IPL3 code, textures, screenshots from copyrighted games or keys.
 ```sh
 # Build a ROM entirely from our own source:
 python3 scripts/make_test_rom.py .build/tests/fill.z64
+python3 scripts/make_test_rom.py .build/tests/texture.z64 --texture
 
 # Capture network-order RDP words (no implicit capture by default):
 AURUM_RDP_TRACE="$PWD/.build/test.rdp" \
@@ -110,15 +136,30 @@ part of `Aurum64.app`.
 `aurum-aurcap-replay prefix` can emit the same neutral checkpoint/RDRAM/VI-color
 format for Aurum's scalar supported-fill path. Its generated fill fixture
 matches Angrylion bit-for-bit in RDRAM and pixel-for-pixel in direct VI color.
-It currently lacks hidden state, TMEM, depth, coverage, and filtered-VI output;
+It emits verified TMEM uploads but lacks hidden state, depth, coverage, and filtered-VI output;
 those remain explicit differential gaps rather than silently passing comparisons.
+
+`aurum-metal-replay capture.aurcap output-prefix library.metallib` uses the
+production Metal fill and texture-copy renderer while retaining the diagnostic
+scalar VI-color export. Texture copy currently supports RGBA16 and CI4/CI8 with
+RGBA16 TLUT plus IA16 and a constrained IA8/I8 copy subset, all with integer
+rectangle/scissor edges and no perspective or LOD. IA8/I8 reject nonzero S/T
+origins, non-unit derivatives, flip, nonzero tile origins and tile
+shift/mask/mirror/clamp modes;
+their broader qword lane/bank behavior is not yet modeled. Alpha comparison is
+limited to the validated RGBA16 path. Unsupported modes, wrapped addresses and
+unmodeled bank conflicts are rejected before any framebuffer write. The CPU
+plan carries validated fetch selectors; Metal fetches TMEM, performs optional
+palette/channel conversion and writes the pixels. This is an initial
+synchronous implementation, with no performance claim.
 
 ## Next milestones
 
 1. Versioned captures with memory/VI snapshots and an independently licensed
    software-reference harness; characterize RDP/VI edge cases before extending.
-2. TMEM uploads and sampling, triangle setup/rasterization, combiner/blender,
-   depth/coverage and VI reconstruction, with differential tests at each step.
+2. TMEM uploads and sampling, triangle setup/rasterization, the remaining
+   combiner/blender modes, depth/coverage and VI reconstruction, with
+   differential tests at each step.
 3. Persist renderer state with core saves; validate cartridge persistence,
    controller hotplug, audio timing, accessibility and native app lifecycle.
 4. ARM64 dynarec with macOS JIT constraints, tile scheduling, resource ownership

@@ -127,7 +127,12 @@ bool read(std::istream& input, std::vector<Record>& records, std::string& error,
         error = "Unsupported capture version or byte order."; return false;
     }
     const uint64_t declaredLimit = get64(header.data() + 20);
-    if (declaredLimit == 0 || declaredLimit > maxBytes) { error = "Capture limit exceeds reader policy."; return false; }
+    // The header's declared limit must be at least the header itself, and a
+    // reader policy may tighten it but never widen it.
+    if (declaredLimit < kHeaderBytes) {
+        error = "Capture declares an invalid size limit."; return false;
+    }
+    const uint64_t captureLimit = std::min(declaredLimit, maxBytes);
     uint64_t total = header.size();
     bool havePrevious = false;
     uint64_t previousSequence = 0;
@@ -144,9 +149,9 @@ bool read(std::istream& input, std::vector<Record>& records, std::string& error,
         // Check the subtraction operands before evaluating the size bound;
         // callers may intentionally supply a reader limit smaller than one
         // chunk header plus payload.
-        if (length > kMaxChunkBytes || length > maxBytes ||
-            kChunkHeaderBytes > maxBytes - length ||
-            total > maxBytes - kChunkHeaderBytes - length) {
+        if (length > kMaxChunkBytes || length > captureLimit ||
+            kChunkHeaderBytes > captureLimit - length ||
+            total > captureLimit - kChunkHeaderBytes - length) {
             error = "Capture chunk exceeds reader limit."; return false;
         }
         Record record;
@@ -164,9 +169,12 @@ bool read(std::istream& input, std::vector<Record>& records, std::string& error,
         }
         havePrevious = true;
         previousSequence = record.sequence;
+        // Optional chunks still consume the file budget even though they are
+        // not returned to the caller; otherwise a file could exceed the limit
+        // by an unbounded number of skipped chunks.
+        total += kChunkHeaderBytes + length;
         if (record.type & kRecordOptional) continue;
         records.push_back(std::move(record));
-        total += kChunkHeaderBytes + length;
     }
 }
 }

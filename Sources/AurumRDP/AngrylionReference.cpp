@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "AngrylionExports.h"
 #include "Capture.hpp"
+#include "TextureCoordinateProbe.hpp"
+#include "AttributeProbe.hpp"
+#include "PerspectiveProbe.hpp"
 
 extern "C" {
 #include <core/n64video.h>
@@ -139,9 +142,15 @@ struct Session {
         const uint32_t end = readLE32(record.payload.data() + 4);
         const uint32_t status = readLE32(record.payload.data() + 8);
         const uint32_t xbus = readLE32(record.payload.data() + 12);
-        require(end >= start && end <= rdram.size(),
-                "RDP submission range is outside captured RDRAM.");
-        require((end - start) % 4 == 0, "RDP submission range is not word aligned.");
+        require(end >= start && (end - start) % 4 == 0,
+                "RDP submission range is invalid.");
+        const uint32_t range = end - start;
+        require(record.payload.size() - 16 == range,
+                "RDP submission payload does not match its address range.");
+        if (xbus)
+            require(range <= dmem.size(), "XBUS RDP range is too large.");
+        else
+            require(end <= rdram.size(), "RDP submission range is outside captured RDRAM.");
         dpRegisters[DP_START] = start;
         dpRegisters[DP_CURRENT] = start;
         dpRegisters[DP_END] = end;
@@ -151,13 +160,15 @@ struct Session {
             const size_t payloadOffset = 16 + (address - start);
             const uint32_t word = readBE32(record.payload.data() + payloadOffset);
             if (xbus) {
-                require(address <= dmem.size() - 4, "XBUS RDP word is outside DMEM.");
+                const uint32_t dmemAddress = address & 0xfff;
+                require(dmemAddress <= dmem.size() - 4, "XBUS RDP word is outside DMEM.");
+                std::copy_n(reinterpret_cast<const uint8_t*>(&word), 4,
+                            dmem.begin() + dmemAddress);
             } else {
                 require(address <= rdram.size() - 4, "RDP word is outside RDRAM.");
+                std::copy_n(reinterpret_cast<const uint8_t*>(&word), 4,
+                            rdram.begin() + address);
             }
-            auto& destination = xbus ? dmem : rdram;
-            std::copy_n(reinterpret_cast<const uint8_t*>(&word), 4,
-                        destination.begin() + address);
         }
         n64video_process_list();
         checkpoint("rdp", record.sequence, submissions, 0, 0);
@@ -234,6 +245,99 @@ struct Session {
 } // namespace
 
 int main(int argc, char** argv) {
+    if (argc == 4 && std::string(argv[1]) == "--perspective") {
+        try {
+            using namespace aurum::perspective_probe;
+            std::ifstream input(argv[2], std::ios::binary);
+            std::ofstream output(argv[3], std::ios::binary | std::ios::trunc);
+            readMagic(input, kInputMagic); writeMagic(output, kOutputMagic);
+            n64video_perspective_probe_init();
+            Request request;
+            size_t count = 0;
+            while (readWords(input, request)) {
+                require(++count <= kMaxCases && request[0] <= 1, "Invalid perspective probe request.");
+                Response response;
+                n64video_perspective_probe(request.data(), response.data());
+                writeWords(output, response);
+            }
+            require(count, "Empty perspective probe.");
+            output.flush(); require(bool(output), "Cannot finish perspective probe.");
+            std::printf("Reference: %zu perspective/affine probes\n", count);
+            return 0;
+        } catch (const std::exception& error) {
+            std::fprintf(stderr, "aborted: %s\n", error.what()); return 1;
+        }
+    }
+    if (argc == 4 && std::string(argv[1]) == "--triangle-attributes") {
+        try {
+            using namespace aurum::attribute_probe;
+            std::ifstream input(argv[2], std::ios::binary);
+            std::ofstream output(argv[3], std::ios::binary | std::ios::trunc);
+            readMagic(input, kInputMagic);
+            writeMagic(output, kOutputMagic);
+            Session session(4 << 20);
+            session.configure();
+            Request request;
+            size_t count = 0;
+            while (readWords(input, request)) {
+                require(++count <= kMaxCases, "Too many attribute probes.");
+                const uint32_t opcode = (request[0] >> 24) & 63;
+                require(opcode >= 8 && opcode <= 15 && request[46] < 1024 &&
+                        (request[44] >> 24) == 0xed && !(request[45] & 0xff000000u),
+                        "Invalid attribute probe request.");
+                require(((request[44] >> 12) & 4095) <= ((request[45] >> 12) & 4095) &&
+                        (request[44] & 4095) <= (request[45] & 4095), "Invalid attribute probe scissor.");
+                Response response{};
+                n64video_attribute_probe(request.data(), response.data());
+                writeWords(output, response);
+            }
+            require(count != 0, "Empty attribute probe.");
+            output.flush();
+            require(bool(output), "Cannot finish attribute probe.");
+            std::printf("Reference: %zu triangle attribute probes\n", count);
+            return 0;
+        } catch (const std::exception& error) {
+            std::fprintf(stderr, "aborted: %s\n", error.what());
+            return 1;
+        }
+    }
+    if (argc == 4 && std::string(argv[1]) == "--texture-coordinates") {
+        try {
+            using namespace aurum::coordinate_probe;
+            std::ifstream input(argv[2], std::ios::binary);
+            std::ofstream output(argv[3], std::ios::binary | std::ios::trunc);
+            readMagic(input, kInputMagic);
+            writeMagic(output, kOutputMagic);
+            n64video_coordinate_probe_init();
+            Request request;
+            size_t count = 0;
+            while (readWords(input, request)) {
+                require(++count <= kMaxCases, "Too many coordinate probe cases.");
+                const uint32_t format = (request[0] >> 21) & 7;
+                const uint32_t size = (request[0] >> 19) & 3;
+                const bool supportedFetch =
+                    (format == 0 && (size == 2 || size == 3)) ||
+                    (format == 3 && (size == 1 || size == 2)) ||
+                    (format == 4 && size == 1);
+                require(((request[0] >> 24) & 63) == 0x35 &&
+                        ((request[2] >> 24) & 63) == 0x32 &&
+                        ((request[1] >> 24) & 7) == ((request[3] >> 24) & 7) &&
+                        supportedFetch,
+                        "Invalid coordinate probe tile commands.");
+                Response response{};
+                n64video_coordinate_probe(request.data(), response.data());
+                writeWords(output, response);
+            }
+            require(count != 0, "Empty coordinate probe.");
+            output.flush();
+            require(bool(output), "Cannot finish coordinate probe output.");
+            std::printf("Reference: %zu point/copy coordinate and texel cases\n", count);
+            return 0;
+        } catch (const std::exception& error) {
+            std::fprintf(stderr, "aborted: %s\n", error.what());
+            return 1;
+        }
+    }
     if (argc < 2 || argc > 3) {
         std::fprintf(stderr, "Usage: aurum-angrylion-reference file.aurcap [output-prefix]\n");
         return 2;

@@ -61,6 +61,9 @@ Run `python3 scripts/test.py` after a build. Local test output is in
 
 # Texture upload record - 2026-10-24
 
+Historical snapshot; later M4 records below supersede the texture-format and
+sampling limitations stated in this section.
+
 ## Completed locally
 
 | Check | Actual result |
@@ -160,6 +163,9 @@ rejected-record test fail because RDRAM keeps a partial write.
 
 # 8-bit texel uploads - 2026-10-24
 
+Historical snapshot; the later CI4/CI8 copy-texture record below adds limited
+indexed lookup, without changing the unsupported IA/I/YUV and point-sampling status.
+
 ## Completed locally
 
 | Check | Actual result |
@@ -189,6 +195,13 @@ an 8-bit texel exactly.
   different `tmem_formatting` path in the reference.
 
 # Explicit texture fetch - 2026-10-24
+
+Historical snapshot for the point-fetch helper; CI4/CI8 support added later is
+specific to the production copy-cycle path and is not implemented by this helper.
+
+Historical limitation: these tests checked reference TMEM placement but used
+VI-style RGBA16 channel expectations. Direct reference texel comparisons on
+2026-10-26 found and corrected that decoding error; see the record below.
 
 ## Completed locally
 
@@ -220,3 +233,508 @@ the uploader and the sampler against each other.
   texels inside the uploaded rectangle resolve.
 - **Filtering:** point sampling only. Three-point filtering, LOD, detail and
   sharpen are separate work and must not receive a nearest sample silently.
+
+# Point/copy texture coordinates - 2026-10-26
+
+Historical scope record for the coordinate-only milestone; subsequent sections
+document the production RGBA16 and CI4/CI8 copy implementations.
+
+## Completed locally
+
+The independent reference remains Angrylion-Plus at
+`9c8b9ed3e7d7f00dff8bc872ccdd3fba1a3673fc`. A development-only
+`--texture-coordinates input output` mode calls its actual coordinate and
+`fetch_texel` functions. Requests contain original SetTile/SetTileSize words
+and signed fixed-point S/T values; the separate Aurum executable decodes those
+words into rectangle snapshots and compares coordinates and texels.
+No reference library is linked into the production renderer or application.
+
+| Check | Actual result |
+| --- | --- |
+| Coordinate comparison | 1,279,760 requests matched point S/T and copy S[0..3]/T, seven integer outputs per request |
+| Signed inputs and shift | All 65,536 input bit patterns at all 16 shifts, on both axes; negative fractions, 16-bit truncation and sign extension included |
+| Bounds and addressing modes | All 16 masks and shift values, mirror/clamp combinations, fractional and reversed tile bounds, mask/mirror saturation at ten bits, and 10,000 seeded combinations |
+| Point vs copy | Point mapping clamps when enabled or mask=0; copy ignores clamp and increments S lanes after shift/origin conversion, before each lane's mask/mirror |
+| Point sampling | 977,243 accepted RGBA16/32 fetches matched the reference's actual texel channels from a shared deterministic 4 KiB TMEM image |
+| RGBA16 correction | RGB channels now replicate five bits to eight, and alpha becomes 0/255. Texture fetch is distinct from the existing VI scanout quantization |
+| Unsupported fetches | Non-RGBA formats, negative or overflowing addresses and unmodeled TMEM wrap remain explicitly rejected |
+| Decoder state | LoadTile, LoadBlock and LoadTLUT update tile bounds even without an accepting upload handler; later changes leave captured rectangles unchanged |
+| Negative controls | Corrupting a mapped coordinate or texel channel makes the comparison fail; a truncated probe is rejected |
+| Test isolation | CTest fixtures generate requests, run the independent reference process, then compare. Selecting only `texture-coordinates` also brings in its prerequisites |
+
+Full `scripts/build.sh` and `MTL_DEBUG_LAYER=1 python3 scripts/test.py` both
+exited 0. CTest passed 11/11. The test output directory started empty; the run
+also passed lifecycle checks, eight optimized Swift path startups, relocated
+bundle/dyld/signature checks, capture/replay and 20 matching layer comparisons
+(including XBUS wrap). A 200-byte runtime capture stayed within its budget and
+retained its terminal record. Local logs: `.build/m4-coordinate-build.log`,
+`.build/m4-coordinate-test.log`, and
+`.build/native/Testing/Temporary/LastTest.log`.
+
+The empty-directory run also verifies a correction to the preceding audit
+tests: they now copy freshly generated `reference/fill.*` artifacts rather than
+depend on a previous run's `reference/actual` directory. That dependency caused
+the earlier PR #2 head `278b860` to fail on clean CI.
+
+## Scope boundary
+
+This closes the signed, non-perspective point/copy coordinate slice of M4-05.
+The copy results are coordinates for a four-lane fetch, not a copy-cycle
+framebuffer implementation. TextureRectangle/Flip still report unsupported
+in production. Copy qword fetching, rectangle rasterization, combiner/blender,
+perspective and LOD, three-point filtering, and CI/IA/I/YUV sampling remain
+separate work. Neither this software-reference match nor a successful build
+establishes game compatibility or hardware accuracy.
+
+# First production Metal texture rectangles - 2026-10-26
+
+The M4-07 RGBA16 copy slice now runs in the production video plugin. Mature
+emulator code was used to study behavior and as an independent executable
+reference; the CPU address planner and Metal kernel are original code.
+
+| Check | Actual result |
+| --- | --- |
+| Independent copy comparison | 259 original TextureRectangle/Flip draws match pinned Angrylion RDRAM, TMEM and diagnostic VI-color layers; accepted draws report Unsupported=0 |
+| Matrix coverage | 128 cases each in 4/8 MiB RDRAM, separate framebuffer slots to preserve every case's result, odd stride/base halfword, both TMEM halves, signed/fractional S/T and derivatives, masks, mirrors, shifts, tile origins, clamp bypass, alpha, scissor and partial qwords |
+| Memory order | Within one submission, a completed GPU framebuffer draw is uploaded into another TMEM tile and drawn again; complete RDRAM/TMEM match |
+| Production ROM | Original 277-instruction ROM, 11 RDP commands, eight VI events, zero Unsupported and 1024 silent audio frames; all 320x240 Metal scanout pixels match, including transparent texels preserving the fill background and the RSP marker |
+| Write ownership | One GPU invocation per complete host word, including words shared across odd-stride rows; a neighboring halfword remains intact |
+| Rejection | Non-copy cycles, non-RGBA16 formats, fractional rectangle/scissor edges, perspective/TLUT/depth/field modes, invalid destination layout and unmodeled TMEM wrap reject without modifying RDRAM, including failure after a valid first row |
+| Immutable draw state | Subsequent scissor/OtherModes commands leave previously decoded rectangle snapshots unchanged |
+
+The production plugin now wires texture uploads/draws and clears TMEM on new
+ROM/reset. `aurum-metal-replay` exercises this same Renderer in an independent
+process; scalar replay retains no texture-draw handler and reports the basic
+texture fixture unsupported. Replay's VI-color layer is still the diagnostic
+scalar export; the ROM separately verifies the production Metal VI scanout.
+Hidden state, VI depth and VI coverage are explicitly unavailable.
+
+`scripts/build.sh` and `MTL_DEBUG_LAYER=1 python3 scripts/test.py` exited 0.
+CTest passed 12/12. The test directory started empty; lifecycle, eight optimized
+Swift temporary-path startups, relocated bundle/dyld/signatures, all prior
+coordinate/upload/fetch checks and bounded capture tests passed. There are now
+24 matching layer comparisons, including four new Metal texture captures.
+Logs: `.build/m4-copy-full-build.log`, `.build/m4-copy-full-test.log` and
+`.build/native/Testing/Temporary/LastTest.log`.
+
+During matrix expansion, a 1 MiB data region plus its four-byte address exceeded
+the capture payload cap. The fixture now divides seed data into bounded records;
+the reader's limit was retained. Distinct framebuffer slots prevent later
+draws from concealing earlier errors.
+
+This is a restricted copy path, not completion of M4 or a game compatibility
+claim. Integer screen/scissor edges, RGBA16 destination and texture, copy cycle
+and optional one-bit alpha comparison are supported. Other raw OtherModes,
+wrapped addresses, bank conflicts and framebuffer spans crossing the declared
+stride remain rejected. Three-point filtering, remaining texture formats,
+triangles, combiner/blender/depth/coverage and accurate VI remain work ahead.
+
+# CI4/CI8 palette copy textures - 2026-10-26
+
+This follow-on M4 slice adds indexed texture fetch to the existing copy-cycle
+Metal rectangle path. `LoadTLUT` uploads RGBA16 entries to TMEM; CI8 uses the
+full index and CI4 selects one nibble and the tile palette. Metal performs the
+palette resolution. The CPU planner retains only the source-byte address and
+hardware lane selectors; no rendering code was copied from the reference.
+
+| Check | Actual result |
+| --- | --- |
+| Independent fixtures | Six original CI4/CI8 captures (base, 64-case matrix and palette-port probe per format) match pinned Angrylion RDRAM, TMEM and diagnostic VI-color layers |
+| Coverage | 132 indexed copy draws total: 64 matrix cases per format, plus base and lane/palette-port probes; includes signed coordinates, shifts, mask/mirror choices, odd rows and both nibble selections |
+| Palette ports | Deliberately non-identical palette lanes match; the matrix compares complete RDRAM and TMEM at every checkpoint |
+| Upload bounds | A size-0 load-tile descriptor packs 256 RGBA16 entries in the upper 2 KiB of TMEM; the last-entry boundary is accepted and overflow is rejected atomically |
+| Production route | Original 639-instruction CI8 ROM runs through CPU/RSP/AI/video plugin/Metal/VI: 15 RDP commands, eight VI events, zero Unsupported and exact 320x240 output pixels |
+| Regression | `scripts/build.sh` exited 0; a fresh-output `MTL_DEBUG_LAYER=1 python3 scripts/test.py` exited 0; CTest passed 12/12, including lifecycle, Swift startup, bundle relocation/signatures and previous texture matrices |
+
+During the first clean run the shared ROM fixture generator accidentally
+enabled TLUT mode for both RGBA16 and CI variants. The production renderer
+correctly rejected the RGBA16 case. The generator now enables TLUT only for the
+CI ROM; the full suite then passed from a fresh output directory. This keeps
+production mode validation strict rather than weakening it.
+
+The RGBA16 copy node's earlier 259 draws plus this 132-draw CI matrix are now
+391 original reference comparisons. Only the six added fixtures are new in this
+node. The test-only scalar replay still reports textured draws unsupported; the
+reference remains a separate offline executable pinned to commit
+`9c8b9ed3e7d7f00dff8bc872ccdd3fba1a3673fc`, not part of the app.
+
+Scope: this is CI4/CI8 + RGBA16 TLUT inside the restricted copy-cycle rectangle
+path, not general texture support. CI LoadTile input is still 8-bit packed bytes
+for the CI4 copy interpretation; native 4-bit LoadTile upload, point-cycle CI
+sampling, IA/I/YUV, non-RGBA16 TLUT, filtering/LOD, triangles and the combiner/
+blender/depth/coverage pipeline remain unfinished. No commercial game has been
+validated, and the emulator is not yet at a playable-game stage.
+
+# IA8/IA16/I8 point-fetch decode - 2026-10-26
+
+The isolated point sampler now reads IA8, IA16 and I8 from TMEM in addition to
+the previous RGBA16/RGBA32 subset. IA8, I8 and IA16 byte layouts are checked
+against independently generated Angrylion TMEM layers. A separate coordinate
+probe calls the pinned reference's actual texture fetch and compares all four
+channels against the sampler on a deterministic TMEM pattern. This directly
+verified that IA8 expands its intensity and alpha nibbles by replication,
+IA16 uses one byte each for intensity and alpha, and I8 replicates intensity
+to all four channels (including alpha).
+
+The first direct channel comparison caught an earlier false assumption: the
+sampler had set I8 alpha to 255 based on a common-format convention. Angrylion
+returned the intensity byte for alpha as well (the first probe sample returned
+`0xe6` rather than `0xff`), so the sampler and fixture expectation now use
+intensity for RGBA.
+
+At this point the formats were still isolated from production rendering. The
+follow-on section below records the subsequent copy-cycle work and its separate
+reference evidence. Point-cycle sampling remains unwired.
+
+| Check | Result |
+| --- | --- |
+| Reference TMEM fetch | All 64 IA8, 64 I8 and 32 IA16 texels match independent source patterns and odd-row layout |
+| Reference channel fetch | 64 IA8, 32 IA16 and 64 I8 point samples match Angrylion's actual RGBA texel output, including I8 alpha |
+| Bounds | IA8 fetch beyond the 4 KiB TMEM store is rejected |
+| Build | Fresh `.build/ia-channel-validation` Release build passed |
+| CTest | 12/12 passed with Metal API Validation; includes independent coordinate and channel comparisons |
+| Fetch test | `aurum-texture-fetch-tests .build/ia-channel-validation/fixtures` passed with reference layers |
+
+No commercial game claim follows from this sampler-only milestone.
+
+# IA8/I8/IA16 copy rectangles - 2026-10-26 (restricted addressing)
+
+IA8, I8 and IA16 have a restricted production copy-cycle rectangle path. IA16
+uses the raw 16-bit copy lane. IA8/I8 pass an original baseline capture with
+zero S/T origin, unit copy derivatives, no flip, and default tile addressing,
+including odd texture rows. A broader 64-case matrix exposed RDRAM differences
+for IA8/I8 when coordinates, shifts/masks or flip vary. The earlier planner's
+linear byte-address assumption was too broad; production dispatch now accepts
+IA8/I8 only inside the verified envelope and fails closed for those variants.
+The failed modes are retained as negative differential tests, not dropped.
+
+| Check | Result |
+| --- | --- |
+| Independent baseline | Original IA8, I8 and IA16 captures match pinned Angrylion RDRAM, TMEM and diagnostic VI-color layers |
+| IA/I addressing matrix | IA16's 64-case matrix matches; IA8/I8's 64 unverified variants each report Unsupported and leave the seeded framebuffer unchanged |
+| Production guard | Unit tests accept the verified IA8/I8 baseline envelope and reject nonzero S/T or tile origins, non-unit derivatives, flip and tile addressing changes atomically |
+| Other unsupported modes | Alpha compare for IA/I remains rejected; no approximation is hidden |
+
+The IA8/I8 qword lane/bank mapping remains unresolved outside this envelope; do
+not expand it until an independently explained mapping passes the matrix.
+Point-cycle rendering, filtering, LOD, native 4-bit upload, YUV, general
+triangle attributes, Combiner/Blender/Depth/Coverage and accurate VI remain
+unfinished. No commercial game is claimed playable from this node.
+
+# Flat primitive triangles - 2026-10-28 (strict production gate)
+
+**Superseded by the independent audit below:** the original CPU/Metal
+self-comparison did not establish the advertised combiner or cycle semantics.
+
+The Metal flat-triangle word renderer is now reachable from the RDP decoder's
+production Video callback and Metal capture replay. Triangle issue-time state
+includes SetCombine and SetPrimColor. Dispatch accepts only a single exact
+one-cycle RGBA16 flat primitive-color mode with no shade, texture or Z payload,
+the supported scissor mode, and an exact combiner/mode tuple. All other triangle
+configurations remain Unsupported and do not enter the renderer.
+
+| Check | Result |
+| --- | --- |
+| State snapshot | SetCombine words, SetPrimColor validity/value, framebuffer, scissor and OtherModes are preserved at triangle issue time |
+| Mode gate | The supported flat primitive mode is accepted; a textured variant is rejected |
+| Decoder-to-Metal route | A generated flat triangle reaches the Metal renderer and matches the CPU framebuffer oracle byte-for-byte |
+| Build and tests | `scripts/build.sh` passed; Metal API Validation CTest passed 12/12; fresh-output `scripts/test.py` passed |
+
+This is one narrow fill mode, not general triangle support. Coverage accuracy,
+shade/texture/Z interpolation, additional combiner tuples, blender/depth and
+game-scene compatibility remain open; no commercial game claim follows from
+these synthetic tests.
+
+# Flat triangle independent audit - 2026-10-28
+
+The first external triangle comparison invalidated the preceding node's
+"verified" designation. Cycle encoding 1 selects two-cycle, not one-cycle;
+the previous RGB multiplier selector 6 selects key scale, not the constant
+one. Its original flat fixture rendered black in the pinned reference while
+Aurum incorrectly wrote primitive RGB. The old tuple is now rejected. The
+corrected mode uses cycle encoding 0, disabled RGB/alpha dithering, and
+`(0 - 0) * 0 + PRIMITIVE` for RGB and alpha.
+
+The audit also replaces intersection-of-subrows spans with independent fixed
+edge evaluation and eight staggered pixel samples. It adds left-major decode,
+the integer-row XH/XM anchor, YM switching, fixed-point low-bit truncation and
+wrap, fractional scissor, and non-AA write-sample selection. RGBA16's low bit
+now comes from coverage, not primitive alpha. Writes beyond the stride remain
+valid within scissor/memory bounds; overlapping host words are merged before
+dispatch. Invalid buffer lengths are rejected before Metal uploads.
+
+Evidence for this correction:
+
+- A CPU-only CTest chain generates 320 original triangles and compares the
+  production decoder/planner and scalar writes to pinned Angrylion RDRAM.
+  Coverage counts are independently checked against the reference's hidden
+  bytes at written pixels; production hidden-buffer persistence is still absent.
+- An additional local sweep of 32 seeds, alternating 4/8 MiB, passed 10,240
+  triangle RDRAM/coverage comparisons. Cases include both orientations,
+  negative/fractional coordinates, scissor, YM changes, crossed/degenerate
+  edges, encoded X/slope limits, odd stride/base and differing alpha bytes.
+- Deliberate RDRAM and coverage corruption is rejected. The CPU test also
+  passes AddressSanitizer and UndefinedBehaviorSanitizer.
+- Native C++/Objective-C++/MSL build passes; CPU CTest subset passes 13/13.
+  Metal execution currently fails with `No Metal device is available` in
+  this execution environment. The full app build stops at the Swift macro
+  server (`Operation not permitted` / malformed response). No full-suite,
+  corrected GPU output or refreshed bundle success is claimed.
+- CTest and `scripts/test.py` now require the actual Metal replay to match
+  independent RDRAM, rather than only our own CPU oracle. These GPU checks
+  remain mandatory and have not been skipped or made optional.
+
+M5 remains incomplete: shade/STW/Z interpolation, perspective, and broader
+cycle/coverage behavior still need implementation and reference evidence.
+
+# Triangle attributes and direct shade - 2026-10-28
+
+RGBA, STW and Z now decode into signed attribute origins and X/edge/Y
+derivatives. The optional block ordering is verified for all eight triangle
+opcodes at every possible word split. Tile, level, major-edge orientation and
+the raw major-slope sign are also retained. STW/Z are decoded only: this does
+not enable textured or depth-tested triangles.
+
+A second direct-color tuple implements `(0 - 0) * 0 + SHADE` in one-cycle
+RGBA16 with dithering, AA, blending and depth disabled. The planner supplies
+per-lane X/Y and scan-start values, not precomputed shade RGB; the Metal kernel
+does fixed-point interpolation and quantization using the shared `ShadeMath.h`.
+The non-AA sample gate means accepted pixels use zero coverage-centroid
+offset. Other modes continue to reject rather than use that assumption.
+
+- The new 320-case shade fixture includes constant controls, X/Y/edge
+  gradients, negative derivatives, fractional positions, clipping, both edge
+  orientations, nine-bit clamp and full-width attribute overflow cases.
+- 32 seeds in alternating 4/8 MiB layouts pass 10,240 shaded-triangle
+  whole-RDRAM/written-coverage comparisons against pinned Angrylion. The same
+  10,240 flat-triangle regression sweep passes with the new plan format.
+- Independent negative controls reject corrupted RGB and coverage; an
+  algebraic X/Y-gradient unit test does not depend on the shared CPU oracle.
+  Shade alpha arithmetic has unit tests, but alpha-dependent blending and
+  alpha compare are not enabled or claimed externally validated.
+- Native C++/Objective-C++ and the updated MSL compile; struct-size checks
+  enforce the 36-byte write plan and 84-byte shade parameters on both sides.
+  Metal's module cache is now explicitly inside the build directory.
+  CPU CTest subset passes 16/16; the shaded comparison passes ASan/UBSan.
+- CTest and the full script require separate flat and shaded Metal replay
+  comparisons. GPU execution remains unavailable in this environment, so
+  these GPU assertions, full package validation and refreshed application
+  output are still pending. Compilation is not treated as GPU validation.
+
+This advances M5 attribute handling, but does not complete M5 or M6.
+
+# STW/Z setup and perspective division - 2026-10-29
+
+Independent intermediate-state probes now execute the pinned reference's
+triangle handlers and export actual span registers. Of 8,192 requests across
+all eight opcodes, 5,020 valid rows match RGBA/STW/Z initial values, X steps,
+STW Y steps, scan anchors, affine coordinates and corrected non-AA depth.
+Undefined intermediate registers for reference-invalid rows are not compared.
+Per-pixel STW/Z evaluation is separately checked against iterative advancement
+of those external row registers, including depth's untruncated X derivative.
+
+The perspective stage passes 589,824 external comparisons covering all
+65,536 signed W encodings, zero/negative W, S/T signs and overflow flags, plus
+affine bypass. Integer reciprocal endpoints are generated from a rational
+curve; one segment-six endpoint needs a one-unit downward adjustment. The
+original failing W=35 case remains a regression control. No external lookup
+table or renderer function was copied into production code.
+
+Corrupted fields, truncated input/output, trailing responses, invalid modes
+and out-of-range probe rows are rejected. CPU probes pass ASan/UBSan. The
+test-only Metal divider kernel compiles and is required to compare the same
+589,824 outputs; it cannot execute in the current no-Metal-device environment.
+Z interpolation/clamp is not depth testing, Z compression, or a Z-buffer write.
+
+# RGBA16 point-textured triangles - 2026-10-29
+
+An exact one-cycle direct TEXEL0 mode is now wired through the production
+Video callback and Metal replay. It accepts RGBA16 texture/framebuffer, point
+sampling (`sample_type=0`, `bi_lerp0=1`), affine/perspective coordinates, and
+tile shift/mask/mirror/clamp. AA, dithering, blending, LOD, alpha comparison,
+other formats, shade modulation, Z and unsupported TMEM wrap remain rejected.
+The full draw is validated before writes; each GPU invocation owns a complete
+destination word, including overlapped rows and odd framebuffer bases.
+
+Metal computes STW interpolation, division/overflow clamping, tile addressing
+and TMEM fetch per pixel. The CPU preflight uses the same arithmetic to validate
+addresses but does not supply precomputed colors. Shader and host both assert
+the 192-byte texture parameters and 36-byte word plan.
+
+- 320 original textured cases use two TMEM bases, all eight tile indices,
+  multiple line strides, nonzero tile origins, negative/fractional coordinates,
+  left/right major edges, both division modes, and zero/negative/varying W.
+- 32 seeds alternating 4/8 MiB pass 10,240 independent whole-RDRAM, TMEM and
+  written-coverage comparisons. CPU results also match the earlier standalone
+  sampler; external comparison remains the correctness gate.
+- Tests check tile snapshot mutation, unsupported-mode and TMEM rejection,
+  corrupted framebuffer/TMEM/coverage negative controls and ASan/UBSan.
+- Native C++/Objective-C++ and production/test MSL compile. CPU CTest subset
+  passes 26/26. GPU CTest and full-script comparisons remain required but
+  unavailable here; no refreshed app, full-suite success or GPU accuracy is
+  claimed. No GPU skip or CPU fallback has been added to turn failures green.
+
+This is a tested CPU implementation and compiled GPU integration, not a
+completed M5/M6 milestone or a compatibility release.
+
+# One-cycle Combiner C1 - 2026-10-29
+
+The production triangle callback now routes a restricted one-cycle RGBA16
+Combiner through a shared CPU/MSL parameter block. Supported output sources are
+primitive color, interpolated shade, point-sampled RGBA16 TEXEL0 and
+shade-times-TEXEL0. Selector validation rejects unsupported sources before any
+framebuffer write; two-cycle, blender, depth, AA and dithering remain rejected.
+The deterministic threshold alpha-compare slice is documented below.
+
+The new 320-case shade-times-TEXEL0 fixture covers both major-edge directions,
+fractional coordinates, clipping, tile origins, affine/perspective W, varying
+shade gradients and RGBA16 TMEM fetches. Its CPU path matches the separate
+Angrylion reference for whole RDRAM and written coverage. The existing flat,
+shade and point-textured CPU differential fixtures also remain passing after
+moving through the shared Combiner evaluator.
+
+The Metal shader compiles and the CMake graph includes
+generate/reference/CPU-differential/Metal-replay/differential tests for this
+mode. The current environment has no Metal device, so GPU execution is still
+pending and is not reported as passed. This completes an M6 C1 implementation
+slice; alpha/dither, two-cycle, depth, blender and persistent hidden coverage
+remain future slices.
+
+# Single-cycle alpha compare - 2026-10-29
+
+`SetBlendColor` is now captured at triangle issue time. The single-cycle
+Combiner accepts `alpha_compare_en` when `dither_alpha_en` is clear and uses
+the captured blend alpha as a deterministic threshold. Pixels below the
+threshold are rejected before the host-word write; accepted pixels retain the
+existing RGBA16 coverage low-bit behavior. Random alpha dither, blending,
+depth and two-cycle modes remain rejected.
+
+The new 320-case primitive-color fixture varies the source alpha and threshold
+and compares whole RDRAM plus the written hidden coverage bytes against the
+separate reference process. Decoder state, missing-threshold rejection and
+accepted/rejected pixel ownership are covered by unit and differential tests.
+The production Metal kernel contains the same threshold decision. Its runtime
+and Metal differential tests are present in CTest but remain unavailable in
+the current no-device environment.
+
+# Restricted depth update - 2026-10-29
+
+The triangle path now has a deliberately narrow depth-update slice for
+primitive-color RGBA16 triangles: cycle 0, no shade/texture attributes, no AA,
+Blender or alpha compare, and `z_update_en` with Z compare disabled. It writes
+the compressed 16-bit Z representation to the snapshotted Z image while
+preserving the existing word-owned color and coverage writes. Shared depth
+math has unit controls for compression, decompression, delta encoding and
+opaque compare behavior; compare is not yet connected to production.
+
+The 320-case depth fixture uses overlapping color/Z targets, varying primitive
+Z, both edge orientations and fractional clipping. Its CPU path compares whole
+RDRAM, including color and compressed Z writes, against the independent
+reference. Metal replay and differential tests are registered but remain
+unavailable in the current environment because no Metal device is present.
+Persistent hidden coverage and Z compare/update interaction remain the next C4
+work, so this does not complete depth support or M6.
+
+# Interpolated and primitive depth update - 2026-10-29
+
+The restricted RGBA16 depth-update path now consumes the actual per-pixel Z
+coefficients, preserving row/edge/fractional-X corrections, untruncated X
+derivatives, 32-bit wrap and the non-AA clamp before compression. Delta-Z derives
+from the signed high halves of X/Y derivatives, with normalization and the high
+encoded bits stored in the Z halfword. `SetPrimDepth` is decoded, reset and
+snapshotted at issue time; `z_source_sel` selects its Z and delta rather than
+triangle attributes, including triangle opcodes without a Z payload.
+
+Two additional 320-case matrices cover interpolated gradients/encoded limits
+and primitive-depth overrides (with/without Z payloads and eight delta values).
+CPU and actual Metal replay each match the pinned independent reference's whole
+RDRAM. Direct GPU controls also assert isolated high/low halfword writes preserve
+all other color/Z memory. Invalid Z targets, mismatched word alignment, and
+color/Z write-word aliases reject before dispatch and leave memory unchanged.
+Alias rendering itself still needs an ordered implementation, not a racing
+parallel dispatch.
+
+`MTL_DEBUG_LAYER=1 ctest --test-dir .build/native --output-on-failure` passes
+61/61 when run with authorized access to the Metal device. Earlier no-device
+results came from sandboxed device visibility, not absent host GPU hardware.
+At `05d9d62`, both remote build jobs also pass, including the original depth
+Metal differential. The new interpolation/primitive-depth changes require their
+own remote check after pushing. This supersedes the earlier GPU-pending notes
+for these tested paths, not their remaining semantic limitations.
+
+`scripts/build.sh` and the fresh-output `scripts/test.py` run also pass with
+Metal validation enabled. The full script now repeats constant/interpolated/
+primitive depth fixtures at both 4 and 8 MiB and rejects deliberately corrupted
+RDRAM or written coverage outputs, in addition to relocated-bundle and lifecycle
+regressions. These checks do not claim a persistent hidden-state implementation.
+
+Z compare, persistent hidden coverage and low delta-Z hidden bits remain
+unimplemented. No AA, blending, shaded/textured depth draw or full C4 completion
+is claimed.
+
+# Persistent fill/triangle hidden state - 2026-10-30
+
+Fill16/32, flat/shade/point-textured/Combiner triangles and depth update now
+write a persistent Metal hidden buffer. Each guest halfword carries coverage
+or delta-Z low bits, or the reference-compatible unwritten marker (4). A
+single invocation owns the two hidden bytes corresponding to one RDRAM word.
+Triangle plans are now 44 bytes on both C++/MSL sides, adding the coverage
+bits that could not previously be reconstructed from framebuffer alpha.
+
+All triangle Metal differentials now require `.hidden`, comparing the full
+layer rather than only accepted color pixels. CPU triangle tests also compare
+whole hidden state, including Z and untouched locations. Negative controls
+corrupt an untouched byte and a written Z byte, truncate the layer and remove
+it entirely; each must fail. The diff success report is now valid JSON and
+does not count nonexistent VI frames as checked layers.
+
+Direct GPU tests at 4/8 MiB check odd base/stride, separate high/low lane draws,
+fill16/32 encoding, partial coverage, delta-Z low bits, preservation on alpha
+rejection/invalid draws and reset. A mixed command sequence independently
+compares each prefix across submissions: fill32, fill16, depth triangle,
+external visible-memory edits, alpha rejection and color overwrite. These
+v1 memory edits preserve explicit RDP hidden bytes; they do not prove all
+emulated CPU bus hidden-bit effects.
+
+Copy's delayed byte-write history remains unimplemented. A copy draw marks
+the hidden layer unavailable until reset; replay removes any older `.hidden`
+file at the same prefix instead of allowing stale data to pass a comparison.
+This is a state foundation, not completion of Z compare, Blender, AA, VI,
+copy hidden writes, save-state restoration or C4/M6.
+
+Validation: full build/package passed; fresh-output `scripts/test.py` with
+`MTL_DEBUG_LAYER=1` passed, including all 64 CTest cases and relocated-bundle
+regressions. ASan/UBSan triangle replay passed the gradient and primitive-depth
+matrices with whole hidden-state checks. GPU tests ran outside the sandbox with
+authorized device access, not with a CPU substitute.
+
+# Opaque depth compare - 2026-10-30
+
+The primitive-color, non-AA RGBA16 depth path now accepts opaque Z compare,
+with Z update and image-read independently enabled or disabled. It reads the
+persisted Z hidden delta bits and, when image-read is enabled, color hidden
+coverage. With image-read disabled the memory coverage is seven. Accumulated
+coverage overflow requires strict front ordering; without overflow delta-Z
+tolerance applies. The maximum-depth sentinel is tested separately. Failed
+comparisons preserve color, Z, and hidden bits; compare-only passes write color
+and coverage without changing Z/delta. Invalidated hidden state rejects before
+dispatch, so an earlier unmodeled copy cannot silently supply stale inputs.
+
+Compare plans preserve row-ordered visits rather than dropping early candidates
+when rows overlap a small framebuffer stride. One Metal invocation consumes
+the ordered plan; this is deliberately unoptimized. Color/Z aliases and
+mismatched base alignment remain rejected. Three 320-case matrices exercise
+constant, gradient and primitive-Z inputs against independent whole RDRAM and
+hidden layers, with nonvacuous accepted/rejected pixel counters.
+
+Cross-submission tests compare every prefix of five-layer scenes at 4/8 MiB,
+both edge orientations, eight depth exponent regions, varying delta, partial
+coverage and all four update/image-read combinations. A stride-one overlapping
+row case ensures an earlier nearer result survives a farther later candidate.
+Direct GPU controls verify that changing only stored delta low bits changes
+acceptance, image-read changes the overflow branch, and compare-only preserves
+every Z byte. Hand-calculated equality, tolerance and sentinel controls cover
+the shared math independently of the renderer implementation.
+
+This advances C4; other Z modes, shaded/textured depth draws, AA/Blender, copy
+hidden history, CPU hidden-bit bus effects and full C4/M6 completion remain open.
