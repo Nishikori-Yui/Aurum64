@@ -90,14 +90,22 @@ lookup table is embedded. Intermediate attribute and divider probes invoke
 the pinned reference's real routines in the separate test executable.
 These stages have independent CPU and Metal differential evidence.
 Depth interpolation/clamping remains diagnostic for shaded/textured triangles.
-A restricted primitive-color RGBA16 depth-update mode now writes compressed Z
+A restricted primitive-color RGBA16 depth path writes compressed Z
 from interpolated coefficients or SetPrimDepth, plus the high encoded delta-Z
 bits. SetPrimDepth is snapshotted even for triangle opcodes without a Z payload;
 its source-selection bit bypasses interpolated Z and uses the supplied delta.
 Color and Z must have matching word alignment and non-aliasing write-word sets;
 preflight rejects conflicting words before dispatch rather than allowing GPU
-write races. The 252-byte depth parameters carry coefficients, not rendered Z.
-Z compare, two-cycle combiner, blender, LOD and filtered VI remain unfinished.
+write races. The 256-byte depth parameters carry coefficients and mode bits,
+not rendered Z. Opaque compare consumes compressed Z and hidden delta-Z;
+image-read enabled draws also consume the stored color coverage. Accumulated
+coverage overflow selects strict `incoming < stored`; other pixels use the
+delta tolerance, with the maximum-Z sentinel passing either branch. Compare
+failure preserves color, depth and hidden memory. Z update may be disabled.
+The planner keeps repeated pixel visits in row order for compare, and Metal
+evaluates these plans in one serial invocation, a correctness baseline rather
+than a performance claim. Update-only plans retain parallel word ownership.
+Other depth modes, two-cycle combiner, blender, LOD and filtered VI remain unfinished.
 
 The renderer owns one persistent hidden byte per guest halfword, represented
 as two physical bits or an unwritten marker (4), matching the reference export.
@@ -111,8 +119,9 @@ sessions clear this state, and synchronous completion precedes inspection.
 
 Copy-cycle byte-lane delayed hidden writes are not modeled yet: a copy draw
 invalidates hidden-layer export until reset, without changing existing color
-support. Command failures similarly invalidate the layer. No depth-compare or
-VI-filter path may consume it as valid state. CPU-originated hidden-bit bus
+support. Command failures similarly invalidate the layer. Depth compare rejects
+such sessions before writes; a future VI-filter path must also refuse invalid
+state. CPU-originated hidden-bit bus
 effects, delayed write history and serialized restoration still need their own
 model and evidence; v1 memory records only replace visible RDRAM bytes.
 

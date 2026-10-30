@@ -221,6 +221,35 @@ foreach(mode IN ITEMS depth-gradient primitive-depth)
     set_tests_properties(${mode}-metal-differential PROPERTIES
         FIXTURES_REQUIRED "${mode}-reference;${mode}-metal")
 endforeach()
+foreach(mode IN ITEMS depth-compare depth-compare-gradient depth-compare-primitive)
+    set(depth_options --depth-compare)
+    if(mode STREQUAL "depth-compare-gradient")
+        list(APPEND depth_options --depth-gradient)
+    elseif(mode STREQUAL "depth-compare-primitive")
+        list(APPEND depth_options --primitive-depth)
+    endif()
+    add_test(NAME ${mode}-generate COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/make_triangle_fixtures.py"
+        "${TRIANGLE_FIXTURES}/${mode}.aurcap" ${depth_options})
+    set_tests_properties(${mode}-generate PROPERTIES FIXTURES_SETUP ${mode}-input)
+    add_test(NAME ${mode}-reference COMMAND aurum-angrylion-reference
+        "${TRIANGLE_FIXTURES}/${mode}.aurcap" "${TRIANGLE_FIXTURES}/${mode}-reference")
+    set_tests_properties(${mode}-reference PROPERTIES
+        FIXTURES_REQUIRED ${mode}-input FIXTURES_SETUP ${mode}-reference)
+    add_test(NAME ${mode}-differential COMMAND aurum-triangle-tests
+        "${TRIANGLE_FIXTURES}/${mode}.aurcap" "${TRIANGLE_FIXTURES}/${mode}-reference.rdram")
+    set_tests_properties(${mode}-differential PROPERTIES FIXTURES_REQUIRED ${mode}-reference)
+    add_test(NAME ${mode}-metal COMMAND aurum-metal-replay
+        "${TRIANGLE_FIXTURES}/${mode}.aurcap" "${TRIANGLE_FIXTURES}/${mode}-metal"
+        "${CMAKE_BINARY_DIR}/AurumRDP.metallib")
+    set_tests_properties(${mode}-metal PROPERTIES
+        FIXTURES_REQUIRED ${mode}-input FIXTURES_SETUP ${mode}-metal)
+    add_test(NAME ${mode}-metal-differential COMMAND aurum-reference-diff
+        "${TRIANGLE_FIXTURES}/${mode}-reference" "${TRIANGLE_FIXTURES}/${mode}-metal"
+        "${TRIANGLE_FIXTURES}/${mode}.aurcap" --require-hidden)
+    set_tests_properties(${mode}-metal-differential PROPERTIES
+        FIXTURES_REQUIRED "${mode}-reference;${mode}-metal")
+endforeach()
 add_test(NAME shade-generate COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_SOURCE_DIR}/scripts/make_triangle_fixtures.py" "${TRIANGLE_FIXTURES}/shade.aurcap" --shaded)
 set_tests_properties(shade-generate PROPERTIES FIXTURES_SETUP shade-input)
@@ -292,3 +321,5 @@ set_tests_properties(hidden-negative PROPERTIES FIXTURES_REQUIRED
     "primitive-depth-reference;primitive-depth-metal")
 add_test(NAME hidden-sequence-metal COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_SOURCE_DIR}/Tests/hidden_sequence.py" "${CMAKE_BINARY_DIR}")
+add_test(NAME depth-sequence-metal COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_SOURCE_DIR}/Tests/depth_sequence.py" "${CMAKE_BINARY_DIR}")

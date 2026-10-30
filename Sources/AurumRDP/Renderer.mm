@@ -162,8 +162,13 @@ bool Renderer::depthTriangle(uint8_t* memory, size_t length, const Triangle& tri
         error = "Invalid opaque depth triangle memory or renderer.";
         return false;
     }
+    const bool compare = (triangle.otherModesLo & 0x10u) != 0;
+    if (compare && !impl->hiddenValid) {
+        error = "Depth compare requires valid hidden state.";
+        return false;
+    }
     std::vector<TriangleWord> words;
-    if (!makeOpaqueDepthPlan(triangle, length, words, error)) return false;
+    if (!makeDepthPlan(triangle, length, words, error)) return false;
     if (words.empty()) return true;
     @autoreleasepool {
         auto& p = *impl;
@@ -187,7 +192,9 @@ bool Renderer::depthTriangle(uint8_t* memory, size_t length, const Triangle& tri
         [encoder setBuffer:p.ram offset:0 atIndex:0];
         [encoder setBuffer:plan offset:0 atIndex:1];
         [encoder setBytes:&parameters length:sizeof(parameters) atIndex:2];
-        [encoder dispatchThreads:MTLSizeMake(words.size(), 1, 1)
+        const uint32_t count = uint32_t(words.size());
+        [encoder setBytes:&count length:sizeof(count) atIndex:4];
+        [encoder dispatchThreads:MTLSizeMake(compare ? 1 : words.size(), 1, 1)
           threadsPerThreadgroup:MTLSizeMake(p.depthTrianglePipeline.threadExecutionWidth, 1, 1)];
         [encoder endEncoding];
         if (!p.finish(command, error)) return false;

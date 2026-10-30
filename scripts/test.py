@@ -47,13 +47,17 @@ with tempfile.TemporaryDirectory(prefix="aurum-coordinate-negative-") as temp:
 print("PASS: independent coordinate/texel negative controls and truncated probe rejection")
 # The CPU planner and the actual Metal kernel must each match the external
 # renderer. Comparing Metal only to our own span implementation is circular.
-for mode in ("flat", "shaded", "textured", "depth", "depth-gradient", "primitive-depth"):
+for mode in ("flat", "shaded", "textured", "depth", "depth-gradient", "primitive-depth",
+             "depth-compare", "depth-compare-gradient", "depth-compare-primitive"):
     for memory_size in (4 << 20, 8 << 20):
         prefix = tests / f"triangles-{memory_size}-{mode}"
         capture = pathlib.Path(str(prefix) + ".aurcap")
         expected, actual = str(prefix) + ".ref", str(prefix) + ".metal"
-        run([sys.executable, root / "scripts/make_triangle_fixtures.py", capture, memory_size,
-             *([] if mode == "flat" else [f"--{mode}"])])
+        options = {
+            "flat": [], "depth-compare-gradient": ["--depth-compare", "--depth-gradient"],
+            "depth-compare-primitive": ["--depth-compare", "--primitive-depth"],
+        }.get(mode, [f"--{mode}"])
+        run([sys.executable, root / "scripts/make_triangle_fixtures.py", capture, memory_size, *options])
         run([root / ".build/native/aurum-angrylion-reference", capture, expected])
         run([root / ".build/native/aurum-triangle-tests", capture, expected + ".rdram"])
         rendered = subprocess.run([str(root / ".build/native/aurum-metal-replay"), capture, actual,

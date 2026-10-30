@@ -70,7 +70,7 @@ inline ShadeUInt depthPixelDelta(ShadeInt dx, ShadeInt dy) {
 
 inline bool depthOpaquePass(ShadeUInt incoming, ShadeUInt stored,
                             ShadeUInt rawDzMem, ShadeUInt dzPixel,
-                            ShadeUInt dzPixelEncoded) {
+                            bool coverageOverflow) {
     const ShadeUInt oz = depthDecompress(stored);
     ShadeUInt dzmem = depthDeltaDecompress(rawDzMem);
     bool forceCoplanar = false;
@@ -89,6 +89,7 @@ inline bool depthOpaquePass(ShadeUInt incoming, ShadeUInt stored,
     const bool max = oz == 0x3ffffu;
     const ShadeInt diff = ShadeInt(incoming) - ShadeInt(dznew);
     const bool nearer = forceCoplanar || diff <= ShadeInt(oz);
-    (void)dzPixelEncoded;
-    return max || nearer;
+    // Full accumulated coverage requires strict front ordering; only edges
+    // without overflow use the delta-Z tolerance (including coplanar forcing).
+    return max || (coverageOverflow ? incoming < oz : nearer);
 }

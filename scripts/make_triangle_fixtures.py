@@ -41,7 +41,8 @@ def depth_compress(value):
 
 
 def matrix(memory_bytes=4 << 20, seed=0x7A1A, shaded=False, textured=False,
-           alpha_compare=False, depth=False, depth_gradient=False, primitive_depth=False):
+           alpha_compare=False, depth=False, depth_gradient=False, primitive_depth=False,
+           depth_compare=False):
     rng = random.Random(seed)
     records = [initial(memory_bytes), memory(2, 0x200000, b"\x6b\x5a" * (320 * 1024))]
     if depth:
@@ -112,6 +113,8 @@ def matrix(memory_bytes=4 << 20, seed=0x7A1A, shaded=False, textured=False,
         depth_z = 0x2000 + (case % 16) * 0x400
         if depth:
             mode_lo = 0x20
+            if depth_compare:
+                mode_lo = (0x10, 0x30, 0x50, 0x70)[case % 4]
             words += [0x3e000000, depth_address]
             if primitive_depth:
                 mode_lo |= 4
@@ -212,12 +215,13 @@ if __name__ == "__main__":
     parser.add_argument("--depth", action="store_true")
     parser.add_argument("--depth-gradient", action="store_true")
     parser.add_argument("--primitive-depth", action="store_true")
+    parser.add_argument("--depth-compare", action="store_true")
     args = parser.parse_args()
     destination = args.destination
     destination.parent.mkdir(parents=True, exist_ok=True)
-    args.depth = args.depth or args.depth_gradient or args.primitive_depth
+    args.depth = args.depth or args.depth_gradient or args.primitive_depth or args.depth_compare
     if (args.alpha_compare or args.depth) and (args.shaded or args.textured):
         parser.error("alpha-compare/depth are currently limited to primitive-color fixtures")
     destination.write_bytes(matrix(args.memory, args.seed, args.shaded, args.textured,
                                    args.alpha_compare, args.depth, args.depth_gradient,
-                                   args.primitive_depth))
+                                   args.primitive_depth, args.depth_compare))

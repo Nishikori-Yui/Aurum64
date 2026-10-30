@@ -20,13 +20,11 @@ static_assert(sizeof(TriangleWord) == 44);
 static_assert(sizeof(ShadeParameters) == 84);
 static_assert(sizeof(TriangleTextureParameters) == 192);
 static_assert(sizeof(TriangleColorParameters) == 212);
-static_assert(sizeof(TriangleDepthParameters) == 252);
+static_assert(sizeof(TriangleDepthParameters) == 256);
 
-kernel void triangleDepth(device uint* ram [[buffer(0)]],
-                          device const TriangleWord* plan [[buffer(1)]],
-                          constant TriangleDepthParameters& parameters [[buffer(2)]],
-                          device ushort* hidden [[buffer(3)]],
-                          uint index [[thread_position_in_grid]]) {
+inline void depthWord(device uint* ram, device const TriangleWord* plan,
+                      constant TriangleDepthParameters& parameters,
+                      device ushort* hidden, uint index) {
     TriangleWord item = plan[index];
     uint colorWord = ram[item.word];
     uint colorHidden = hidden[item.word], zHidden = 0;
@@ -52,17 +50,26 @@ kernel void triangleDepth(device uint* ram [[buffer(0)]],
                                thread uint& destination) {
         uint address = 0, stored = 0;
         const uint shift = readZ(x, y, address, stored);
+        const uint incoming = triangleDepthValue(parameters, x, y, start);
+        const uint coverageLow = highLane ? item.highHidden : item.lowHidden;
+        const uint coverage = ((value & 1u) << 2) + coverageLow + 1u;
+        const uint oldColor = highLane ? destination >> 16 : destination & 0xffffu;
+        const uint oldHidden = (colorHidden >> (highLane ? 0u : 8u)) & 0xffu;
+        const uint oldZHidden = (zHidden >> (((address >> 1) & 1u) * 8u)) & 0xffu;
+        if (!triangleDepthPass(parameters, incoming, stored, oldZHidden,
+                               oldColor, oldHidden, coverage)) return;
         colorHidden = hiddenWriteLane(colorHidden, highLane ? 0u : 1u,
-                                      highLane ? item.highHidden : item.lowHidden);
-        zHidden = hiddenWriteLane(zHidden, (address >> 1) & 1u, parameters.dzEncoded);
+                                      coverageLow);
         const uint pixel = color | (value & 1u);
         if (highLane)
             destination = (destination & 0xffffu) | (pixel << 16);
         else
             destination = (destination & 0xffff0000u) | pixel;
-        const uint zValue = depthCompress(triangleDepthValue(parameters, x, y, start)) |
-            (parameters.dzEncoded >> 2);
-        zWord = (zWord & ~(0xffffu << shift)) | (zValue << shift);
+        if (parameters.modes & 0x20u) {
+            zHidden = hiddenWriteLane(zHidden, (address >> 1) & 1u, parameters.dzEncoded);
+            const uint zValue = depthCompress(incoming) | (parameters.dzEncoded >> 2);
+            zWord = (zWord & ~(0xffffu << shift)) | (zValue << shift);
+        }
     };
     if (item.high != 0xffffffffu)
         writeLane(item.highX, item.highY, item.highStart, item.high, true, colorWord);
@@ -70,9 +77,24 @@ kernel void triangleDepth(device uint* ram [[buffer(0)]],
         writeLane(item.lowX, item.lowY, item.lowStart, item.low, false, colorWord);
     ram[item.word] = colorWord;
     hidden[item.word] = ushort(colorHidden);
-    if (haveZWord) {
+    if (haveZWord && (parameters.modes & 0x20u)) {
         ram[zWordIndex] = zWord;
         hidden[zWordIndex] = ushort(zHidden);
+    }
+}
+
+kernel void triangleDepth(device uint* ram [[buffer(0)]],
+                          device const TriangleWord* plan [[buffer(1)]],
+                          constant TriangleDepthParameters& parameters [[buffer(2)]],
+                          device ushort* hidden [[buffer(3)]],
+                          constant uint& count [[buffer(4)]],
+                          uint index [[thread_position_in_grid]]) {
+    // Compare consumes earlier pixel writes. Preserve ordered visits even when
+    // a small framebuffer stride makes different rows hit the same address.
+    if (parameters.modes & 0x10u) {
+        if (index == 0) for (uint i = 0; i < count; ++i) depthWord(ram, plan, parameters, hidden, i);
+    } else {
+        depthWord(ram, plan, parameters, hidden, index);
     }
 }
 

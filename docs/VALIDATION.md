@@ -707,3 +707,34 @@ Validation: full build/package passed; fresh-output `scripts/test.py` with
 regressions. ASan/UBSan triangle replay passed the gradient and primitive-depth
 matrices with whole hidden-state checks. GPU tests ran outside the sandbox with
 authorized device access, not with a CPU substitute.
+
+# Opaque depth compare - 2026-10-30
+
+The primitive-color, non-AA RGBA16 depth path now accepts opaque Z compare,
+with Z update and image-read independently enabled or disabled. It reads the
+persisted Z hidden delta bits and, when image-read is enabled, color hidden
+coverage. With image-read disabled the memory coverage is seven. Accumulated
+coverage overflow requires strict front ordering; without overflow delta-Z
+tolerance applies. The maximum-depth sentinel is tested separately. Failed
+comparisons preserve color, Z, and hidden bits; compare-only passes write color
+and coverage without changing Z/delta. Invalidated hidden state rejects before
+dispatch, so an earlier unmodeled copy cannot silently supply stale inputs.
+
+Compare plans preserve row-ordered visits rather than dropping early candidates
+when rows overlap a small framebuffer stride. One Metal invocation consumes
+the ordered plan; this is deliberately unoptimized. Color/Z aliases and
+mismatched base alignment remain rejected. Three 320-case matrices exercise
+constant, gradient and primitive-Z inputs against independent whole RDRAM and
+hidden layers, with nonvacuous accepted/rejected pixel counters.
+
+Cross-submission tests compare every prefix of five-layer scenes at 4/8 MiB,
+both edge orientations, eight depth exponent regions, varying delta, partial
+coverage and all four update/image-read combinations. A stride-one overlapping
+row case ensures an earlier nearer result survives a farther later candidate.
+Direct GPU controls verify that changing only stored delta low bits changes
+acceptance, image-read changes the overflow branch, and compare-only preserves
+every Z byte. Hand-calculated equality, tolerance and sentinel controls cover
+the shared math independently of the renderer implementation.
+
+This advances C4; other Z modes, shaded/textured depth draws, AA/Blender, copy
+hidden history, CPU hidden-bit bus effects and full C4/M6 completion remain open.

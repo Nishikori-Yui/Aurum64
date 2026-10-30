@@ -29,7 +29,7 @@ inline bool makeFlatTrianglePlan(const Triangle& triangle, size_t memoryBytes,
                                  int32_t clipXh, int32_t clipYh,
                                  int32_t clipXl, int32_t clipYl,
                                  std::vector<TriangleWord>& words,
-                                 std::string& error) {
+                                 std::string& error, bool preserveOrder = false) {
     words.clear();
     const auto reject = [&](const char* reason) {
         words.clear();
@@ -71,6 +71,15 @@ inline bool makeFlatTrianglePlan(const Triangle& triangle, size_t memoryBytes,
                 target.highHidden = (std::popcount(mask) - 1) & 3u;
                 target.highX = x; target.highY = span.y; target.highStart = start;
             }
+        }
+        if (preserveOrder) {
+            if (triangle.leftMajor) {
+                for (const auto& [index, word] : destinations) words.push_back(word);
+            } else {
+                for (auto i = destinations.rbegin(); i != destinations.rend(); ++i)
+                    words.push_back(i->second);
+            }
+            destinations.clear();
         }
     }
     for (const auto& [index, word] : destinations) words.push_back(word);

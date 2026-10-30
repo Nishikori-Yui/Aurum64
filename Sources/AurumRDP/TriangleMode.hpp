@@ -67,14 +67,14 @@ inline bool isSimpleCombinerTriangle(const Triangle& triangle) {
            (!triangle.texture || (triangle.tileFormat == 0 && triangle.tileSize == 2));
 }
 
-inline bool isDepthUpdateTriangle(const Triangle& triangle) {
+inline bool isDepthTriangle(const Triangle& triangle) {
     const uint32_t modes = triangle.otherModesLo;
     const bool primitiveZ = (modes & 4u) != 0;
     return (primitiveZ ? triangle.primitiveDepthValid : triangle.z) &&
            !triangle.shade && !triangle.texture &&
            triangle.cycleType == 0 && triangle.fbFormat == 0 && triangle.fbSize == 2 &&
            triangle.scissorMode == 0 && triangle.otherModesHi == kFlatPrimitiveModesHi &&
-           (modes & ~4u) == 0x20u && triangle.combineValid &&
+           !(modes & ~0x74u) && (modes & 0x30u) && triangle.combineValid &&
            triangle.combineHi == kFlatPrimitiveCombineHi &&
            triangle.combineLo == kFlatPrimitiveCombineLo &&
            triangle.primitiveColorValid && triangle.zbAddress % 2 == 0;

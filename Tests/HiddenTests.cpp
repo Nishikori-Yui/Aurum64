@@ -72,6 +72,42 @@ int main(int argc, char** argv) {
             aurum::tmem::Store texture;
             require(renderer.combinerTriangle(ram.data(), bytes, t, texture, error), error.c_str());
             check(); // Alpha rejection preserves explicit hidden coverage.
+            // Read the low delta bits left by an earlier GPU draw. A 64-unit
+            // gap passes with delta=4 but fails with delta=1 at this exponent.
+            t.fbAddress = 0x8000; t.zbAddress = 0x9000; t.otherModesLo = 0x24;
+            t.primitiveDepth = 0x60000004; t.primitiveColor = 0xff0000ff;
+            require(renderer.depthTriangle(ram.data(), bytes, t, error), error.c_str());
+            expected[0x4000] = 1; expected[0x4800] = 2; check();
+            const auto seeded = ram;
+            t.primitiveDepth = 0x60080001; t.primitiveColor = 0x00ff00ff;
+            t.otherModesLo = 0x14; // No image read: full stored coverage, strict depth.
+            require(renderer.depthTriangle(ram.data(), bytes, t, error) && ram == seeded,
+                    "Coverage overflow allowed farther pixel");
+            check();
+            t.otherModesLo = 0x54; // Image read: partial coverage enables tolerance.
+            require(renderer.depthTriangle(ram.data(), bytes, t, error), error.c_str());
+            auto tolerated = seeded;
+            require(aurum::memory::writeHalfword(tolerated.data(), bytes, 0x8000, 0x07c0),
+                    "Expected depth-compare color write");
+            require(ram == tolerated, "Compare-only must preserve Z and every other pixel");
+            check();
+            t.otherModesLo = 0x24; t.primitiveDepth = 0x60000001;
+            require(renderer.depthTriangle(ram.data(), bytes, t, error), error.c_str());
+            expected[0x4800] = 0; check();
+            const auto smallDelta = ram;
+            t.otherModesLo = 0x54; t.primitiveDepth = 0x60080001;
+            t.primitiveColor = 0x0000ffff;
+            require(renderer.depthTriangle(ram.data(), bytes, t, error) && ram == smallDelta,
+                    "Depth compare ignored stored hidden delta");
+            check();
+            t.otherModesLo = 0x34; t.primitiveDepth = 0x5ff80008;
+            require(renderer.depthTriangle(ram.data(), bytes, t, error), error.c_str());
+            auto nearer = smallDelta;
+            require(aurum::memory::writeHalfword(nearer.data(), bytes, 0x8000, 0x003e) &&
+                    aurum::memory::writeHalfword(nearer.data(), bytes, 0x9000, 0x3ff8),
+                    "Expected nearer color/Z writes");
+            require(ram == nearer, "Accepted nearer pixel did not update exact color/Z lanes");
+            expected[0x4800] = 3; check();
             TextureRect copy;
             copy.cycleType = 2; copy.otherModesHi = 2u << 20;
             copy.fbSize = copy.tileSize = 2; copy.fbWidth = 8; copy.fbAddress = 0x6000;
@@ -80,6 +116,11 @@ int main(int argc, char** argv) {
             require(renderer.textureCopy(ram.data(), bytes, copy, texture, error), error.c_str());
             require(!renderer.copyHidden(bytes, actual) && actual.empty(),
                     "Unmodeled copy hidden writes reported as valid");
+            t.zbAddress = 0x5000; t.otherModesLo = 0x34;
+            const auto afterCopy = ram;
+            require(!renderer.depthTriangle(ram.data(), bytes, t, error) && ram == afterCopy &&
+                    error == "Depth compare requires valid hidden state.",
+                    "Depth compare consumed invalidated hidden state");
             renderer.resetHidden(); expected.assign(bytes / 2, 4); check();
         }
         std::puts("PASS: persistent hidden lanes, fill/depth, alpha rejection, external stores and reset");

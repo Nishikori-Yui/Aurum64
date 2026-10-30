@@ -101,7 +101,7 @@ static void unitTests() {
     require(depthCompress(0x5400) == 0x540 &&
             depthDecompress(depthCompress(0x5400)) == 0x5400 &&
             depthDeltaCompress(0x100) != 0 &&
-            depthOpaquePass(0x1234, 0xffff, 0, 1, 0),
+            depthOpaquePass(0x1234, 0xffff, 0, 1, false),
             "Depth compression and opaque compare controls");
     Decoder decoder;
     Triangle triangle;
@@ -227,13 +227,30 @@ static void depthTests() {
     decoder.push(state);
     decoder.push(command);
     const Triangle valid = triangle;
-    require(isDepthUpdateTriangle(valid) && !valid.z && valid.primitiveDepthValid &&
+    require(isDepthTriangle(valid) && !valid.z && valid.primitiveDepthValid &&
             valid.primitiveDepth == 0x12348000 && valid.zbAddress == 0x2000,
             "SetPrimDepth/Z-image issue-time state");
     const auto parameters = makeTriangleDepthParameters(valid);
     require(parameters.dzPixel == 0x8000 && parameters.dzEncoded == 15 &&
             triangleDepthValue(parameters, 2, 0, 2) == 0x91a0,
             "Primitive Z/delta encoding");
+    require(depthOpaquePass(0x30040, 0x4000, 3, 1, false) &&
+            !depthOpaquePass(0x30040, 0x4000, 0, 1, false) &&
+            !depthOpaquePass(0x30040, 0x4000, 3, 1, true) &&
+            !depthOpaquePass(0x30000, 0x4000, 3, 1, true) &&
+            depthOpaquePass(0x2ffff, 0x4000, 0, 1, true) &&
+            depthOpaquePass(0x3ffff, 0xfffc, 0, 1, true),
+            "Opaque depth delta tolerance, overflow, equality and maximum");
+    auto compareParameters = parameters;
+    compareParameters.modes = 0x50;
+    compareParameters.dzPixel = 1;
+    require(triangleDepthPass(compareParameters, 0x30040, 0x4000, 3, 0, 1, 2) &&
+            !triangleDepthPass(compareParameters, 0x30040, 0x4000, 0, 0, 1, 2) &&
+            !triangleDepthPass(compareParameters, 0x30040, 0x4000, 3, 1, 3, 2),
+            "Depth compare must consume both Z and color hidden bits");
+    compareParameters.modes = 0x10;
+    require(!triangleDepthPass(compareParameters, 0x30040, 0x4000, 3, 0, 1, 2),
+            "Image-read-disabled memory coverage is full");
     const uint32_t mutation[] = {0xee000000, 0x76540004, 0xfe000000, 0x3000};
     decoder.push(mutation); decoder.push(command);
     require(triangle.primitiveDepth == 0x76540004 && triangle.zbAddress == 0x3000 &&
@@ -249,12 +266,12 @@ static void depthTests() {
             "Depth derivative normalization boundaries");
     std::vector<TriangleWord> plan;
     std::string error;
-    require(makeOpaqueDepthPlan(valid, 0x4000, plan, error) && !plan.empty(),
+    require(makeDepthPlan(valid, 0x4000, plan, error) && !plan.empty(),
             "Primitive depth plan rejected");
     using Mutation = void (*)(Triangle&);
     const Mutation rejected[] = {
         +[](Triangle& t) { t.primitiveDepthValid = false; },
-        +[](Triangle& t) { t.otherModesLo |= 0x10; },
+        +[](Triangle& t) { t.otherModesLo &= ~0x30u; },
         +[](Triangle& t) { t.otherModesLo |= 8; },
         +[](Triangle& t) { t.otherModesLo |= 1; },
         +[](Triangle& t) { t.otherModesLo |= 0x400; },
@@ -267,7 +284,7 @@ static void depthTests() {
     for (const auto change : rejected) {
         auto item = valid;
         change(item);
-        require(!makeOpaqueDepthPlan(item, 0x4000, plan, error) && plan.empty(),
+        require(!makeDepthPlan(item, 0x4000, plan, error) && plan.empty(),
                 "Invalid depth plan accepted or left partial writes");
     }
 }
@@ -334,16 +351,20 @@ static void compare(const char* capture, const char* reference) {
     aurum::texture::Uploader textures;
     decoder.textureLoad = [&](const TextureLoad& load) { return textures.load(memory.data(), memory.size(), load); };
     size_t draws = 0, pixels = 0, shadedDraws = 0, texturedDraws = 0;
+    size_t compareDraws = 0, depthAccepted = 0, depthRejected = 0;
     decoder.triangle = [&](const Triangle& triangle) {
-        const bool depth = isDepthUpdateTriangle(triangle);
+        const bool depth = isDepthTriangle(triangle);
+        const bool compareDepth = depth && (triangle.otherModesLo & 0x10u);
+        if (compareDepth) ++compareDraws;
         const bool simple = isSimpleCombinerTriangle(triangle);
         require(depth || simple, "Differential fixture mode rejected");
         if (triangle.shade) ++shadedDraws;
         if (triangle.texture) ++texturedDraws;
         std::vector<TriangleWord> plan;
-        require(depth ? makeOpaqueDepthPlan(triangle, memory.size(), plan, error) :
+        require(depth ? makeDepthPlan(triangle, memory.size(), plan, error) :
                         makeTriangleColorPlan(triangle, memory.size(), plan, error), error.c_str());
         auto oracle = memory;
+        auto oracleHidden = actualHidden;
         uint32_t previous = 0;
         bool first = true;
         std::set<std::pair<int32_t, int32_t>> acceptedPixels;
@@ -353,16 +374,15 @@ static void compare(const char* capture, const char* reference) {
             uint32_t writeMask = 0;
             if (depth) {
                 uint32_t oracleMask = 0;
-                require(opaqueDepthWord(memory.data(), memory.size(), depthParameters, word, writeMask),
+                require(depthWord(memory.data(), memory.size(), actualHidden, depthParameters, word, writeMask),
                         "Scalar depth evaluation");
-                require(opaqueDepthWord(oracle.data(), oracle.size(), depthParameters, word, oracleMask) &&
+                require(depthWord(oracle.data(), oracle.size(), oracleHidden, depthParameters, word, oracleMask) &&
                             oracleMask == writeMask, "Scalar depth oracle evaluation");
-                const auto update = [&](int32_t x, int32_t y) {
-                    const size_t halfword = triangle.zbAddress / 2 + size_t(y) * triangle.fbWidth + x;
-                    actualHidden.at(halfword) = uint8_t(depthParameters.dzEncoded & 3u);
-                };
-                if (writeMask & 1u) update(word.highX, word.highY);
-                if (writeMask & 2u) update(word.lowX, word.lowY);
+                if (compareDepth) {
+                    depthAccepted += std::popcount(writeMask);
+                    depthRejected += unsigned(word.high != UINT32_MAX) + unsigned(word.low != UINT32_MAX)
+                        - std::popcount(writeMask);
+                }
             } else {
                 uint16_t high = word.high, low = word.low;
                 require(triangleColorWord(parameters, triangle.texture ? &textures.store() : nullptr,
@@ -402,7 +422,8 @@ static void compare(const char* capture, const char* reference) {
                 acceptedPixels.emplace(word.lowX, word.lowY);
                 ++pixels;
             }
-            require(first || word.word > previous, "Duplicate/out-of-order GPU word ownership");
+            require((triangle.otherModesLo & 0x10u) || first || word.word > previous,
+                    "Duplicate/out-of-order GPU word ownership");
             first = false; previous = word.word;
         }
         auto spans = generateTriangleSpans(triangle);
@@ -411,7 +432,7 @@ static void compare(const char* capture, const char* reference) {
             if (!span.valid) continue;
             for (int32_t x = span.left; x < span.right; ++x) {
                 const uint8_t mask = trianglePixelCoverage(span, x);
-                if ((mask & 0x80) && acceptedPixels.contains({x, span.y})) {
+                if (!depth && (mask & 0x80) && acceptedPixels.contains({x, span.y})) {
                     const uint32_t halfword = triangle.fbAddress / 2 + span.y * triangle.fbWidth + x;
                     writtenCoverage[halfword] = uint8_t((std::popcount(mask) - 1) & 3);
                     actualHidden.at(halfword) = writtenCoverage[halfword];
@@ -452,6 +473,8 @@ static void compare(const char* capture, const char* reference) {
     }
     require(draws >= 256 && pixels > 1000 && decoder.unsupported == 0 && !decoder.hasPendingWords(),
             "Vacuous or incomplete triangle differential");
+    require(!compareDraws || (depthAccepted > 100 && depthRejected > 100),
+            "Depth fixture must exercise accepted and rejected pixels");
     std::ifstream expectedFile(reference, std::ios::binary);
     std::vector<uint8_t> expected((std::istreambuf_iterator<char>(expectedFile)), {});
     require(expected.size() == memory.size(), "Reference length");
@@ -483,9 +506,16 @@ static void compare(const char* capture, const char* reference) {
             throw std::runtime_error("Independent triangle coverage differential");
         }
     }
-    require(hidden == actualHidden, "Independent whole hidden state differential");
+    for (size_t address = 0; address < hidden.size(); ++address) {
+        if (hidden[address] != actualHidden[address]) {
+            std::fprintf(stderr, "hidden=%zu expected=%u actual=%u\n",
+                         address, hidden[address], actualHidden[address]);
+            throw std::runtime_error("Independent whole hidden state differential");
+        }
+    }
     std::printf("PASS: %zu original triangles (%zu shaded, %zu textured), %zu pixel writes match independent RDRAM and written coverage\n",
                 draws, shadedDraws, texturedDraws, pixels);
+    if (compareDraws) std::printf("Depth decisions: %zu accepted, %zu rejected\n", depthAccepted, depthRejected);
 }
 
 int main(int argc, char** argv) {

@@ -17,7 +17,9 @@ affine/perspective texture coordinates and threshold alpha compare without
 random dither. A narrow RGBA16 depth-update triangle path also writes the
 reference-compatible compressed Z value from interpolated Z or SetPrimDepth,
 including encoded delta-Z high bits. Fill and triangle draws also preserve
-hidden coverage and delta-Z low bits across submissions. Z compare, Blender,
+hidden coverage and delta-Z low bits across submissions. Opaque Z compare now
+uses stored depth/delta and coverage, with optional Z update and image read.
+Other depth modes, Blender,
 copy hidden-write semantics, additional combiner modes, filtered textures and accurate VI filters
 remain unfinished. CPU and Metal evaluation have independent reference tests.
 The CPU uses the cached
@@ -68,7 +70,8 @@ core but game-driven persistence still needs validation.
 - CPU triangle differential: flat, shade, point TEXEL0 and shade-times-TEXEL0
   one-cycle RGBA16 fixtures, plus threshold alpha-compare cases, compare whole
   RDRAM and the full hidden-state layer against the separate reference process. The
-  restricted depth-update fixture also compares color and compressed Z writes;
+  restricted depth fixtures also compare color, compressed Z, and opaque
+  compare decisions with update/image-read enabled or disabled;
   Metal replay requires both layers, including untouched hidden bytes and delta-Z.
 - Original generated ROM: CPU boot without proprietary IPL3, RDP DMA, Metal
   rendering, a small scalar RSP program, silent AI DMA and exact full-frame pixels.
