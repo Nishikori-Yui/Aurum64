@@ -6,6 +6,7 @@
 #include "TriangleReference.hpp"
 #include "TriangleColor.hpp"
 #include "TriangleDepth.hpp"
+#include "HiddenMath.h"
 #include "TriangleTexture.hpp"
 #include "TriangleTextureDepth.hpp"
 #include <cstdio>
@@ -328,6 +329,7 @@ static void compare(const char* capture, const char* reference) {
     require(aurum::capture::read(input, records, error), error.c_str());
     std::vector<uint8_t> memory;
     std::map<uint32_t, uint8_t> writtenCoverage;
+    std::vector<uint8_t> actualHidden;
     Decoder decoder;
     aurum::texture::Uploader textures;
     decoder.textureLoad = [&](const TextureLoad& load) { return textures.load(memory.data(), memory.size(), load); };
@@ -355,6 +357,12 @@ static void compare(const char* capture, const char* reference) {
                         "Scalar depth evaluation");
                 require(opaqueDepthWord(oracle.data(), oracle.size(), depthParameters, word, oracleMask) &&
                             oracleMask == writeMask, "Scalar depth oracle evaluation");
+                const auto update = [&](int32_t x, int32_t y) {
+                    const size_t halfword = triangle.zbAddress / 2 + size_t(y) * triangle.fbWidth + x;
+                    actualHidden.at(halfword) = uint8_t(depthParameters.dzEncoded & 3u);
+                };
+                if (writeMask & 1u) update(word.highX, word.highY);
+                if (writeMask & 2u) update(word.lowX, word.lowY);
             } else {
                 uint16_t high = word.high, low = word.low;
                 require(triangleColorWord(parameters, triangle.texture ? &textures.store() : nullptr,
@@ -406,6 +414,7 @@ static void compare(const char* capture, const char* reference) {
                 if ((mask & 0x80) && acceptedPixels.contains({x, span.y})) {
                     const uint32_t halfword = triangle.fbAddress / 2 + span.y * triangle.fbWidth + x;
                     writtenCoverage[halfword] = uint8_t((std::popcount(mask) - 1) & 3);
+                    actualHidden.at(halfword) = writtenCoverage[halfword];
                 }
             }
         }
@@ -419,6 +428,7 @@ static void compare(const char* capture, const char* reference) {
             const auto size = little(record.payload.data());
             require(size == (4 << 20) || size == (8 << 20), "Memory size");
             memory.resize(size);
+            actualHidden.assign(size / 2, kHiddenUnwritten);
         } else if (record.type == aurum::capture::kRecordMemory) {
             aurum::capture::MemoryPayload payload;
             require(aurum::capture::parseMemoryPayload(record, payload) &&
@@ -473,6 +483,7 @@ static void compare(const char* capture, const char* reference) {
             throw std::runtime_error("Independent triangle coverage differential");
         }
     }
+    require(hidden == actualHidden, "Independent whole hidden state differential");
     std::printf("PASS: %zu original triangles (%zu shaded, %zu textured), %zu pixel writes match independent RDRAM and written coverage\n",
                 draws, shadedDraws, texturedDraws, pixels);
 }

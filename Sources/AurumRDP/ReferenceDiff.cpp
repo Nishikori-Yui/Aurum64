@@ -16,6 +16,7 @@ struct Options {
     fs::path expectedPrefix;
     fs::path actualPrefix;
     fs::path capture;
+    bool requireHidden = false;
 };
 
 struct Checkpoint {
@@ -129,11 +130,11 @@ void printExpectedActual(uint32_t expected, uint32_t actual) {
 }
 
 Options parse(int argc, char** argv) {
-    if (argc != 4) {
-        std::fprintf(stderr, "Usage: aurum-reference-diff expected-prefix actual-prefix capture.aurcap\n");
+    if (argc < 4 || argc > 5 || (argc == 5 && std::string(argv[4]) != "--require-hidden")) {
+        std::fprintf(stderr, "Usage: aurum-reference-diff expected-prefix actual-prefix capture.aurcap [--require-hidden]\n");
         throw std::runtime_error("argument count");
     }
-    return {argv[1], argv[2], argv[3]};
+    return {argv[1], argv[2], argv[3], argc == 5};
 }
 
 } // namespace
@@ -236,6 +237,12 @@ int main(int argc, char** argv) {
                 std::error_code expectedError, actualError;
                 const bool expectedExists = fs::exists(expectedPath, expectedError);
                 const bool actualExists = fs::exists(actualPath, actualError);
+                if (options.requireHidden && std::string(name) == "hidden" &&
+                    (!expectedExists || !actualExists)) {
+                    printHeader("differ", options);
+                    std::printf(",\"firstDifference\":\"required-layer-missing\",\"layer\":\"hidden\"}\n");
+                    return 1;
+                }
                 if (expectedExists != actualExists) {
                     const bool optionalReferenceOnly = expectedExists && !actualExists &&
                         (std::string(name) == "hidden" || std::string(name) == "vi-depth" ||
@@ -328,7 +335,7 @@ int main(int argc, char** argv) {
                 std::printf("%s\"%s\"", first ? "" : ",", name);
                 first = false;
             } else {
-                bool present = true;
+                bool present = viEvents != 0;
                 for (size_t i = 0; i < viEvents; ++i) {
                     const fs::path framePath = options.actualPrefix.parent_path() /
                         (options.actualPrefix.filename().string() + "." + name + "-" +
@@ -356,7 +363,7 @@ int main(int argc, char** argv) {
             std::printf("%s\"%s\"", first ? "" : ",", name);
             first = false;
         }
-        std::printf("]}\n");
+        std::printf("]}}\n");
         return 0;
     } catch (const std::exception& error) {
         std::printf("{\"status\":\"error\",\"message\":\"%s\"}\n", error.what());

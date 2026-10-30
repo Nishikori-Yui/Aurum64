@@ -671,3 +671,39 @@ regressions. These checks do not claim a persistent hidden-state implementation.
 Z compare, persistent hidden coverage and low delta-Z hidden bits remain
 unimplemented. No AA, blending, shaded/textured depth draw or full C4 completion
 is claimed.
+
+# Persistent fill/triangle hidden state - 2026-10-30
+
+Fill16/32, flat/shade/point-textured/Combiner triangles and depth update now
+write a persistent Metal hidden buffer. Each guest halfword carries coverage
+or delta-Z low bits, or the reference-compatible unwritten marker (4). A
+single invocation owns the two hidden bytes corresponding to one RDRAM word.
+Triangle plans are now 44 bytes on both C++/MSL sides, adding the coverage
+bits that could not previously be reconstructed from framebuffer alpha.
+
+All triangle Metal differentials now require `.hidden`, comparing the full
+layer rather than only accepted color pixels. CPU triangle tests also compare
+whole hidden state, including Z and untouched locations. Negative controls
+corrupt an untouched byte and a written Z byte, truncate the layer and remove
+it entirely; each must fail. The diff success report is now valid JSON and
+does not count nonexistent VI frames as checked layers.
+
+Direct GPU tests at 4/8 MiB check odd base/stride, separate high/low lane draws,
+fill16/32 encoding, partial coverage, delta-Z low bits, preservation on alpha
+rejection/invalid draws and reset. A mixed command sequence independently
+compares each prefix across submissions: fill32, fill16, depth triangle,
+external visible-memory edits, alpha rejection and color overwrite. These
+v1 memory edits preserve explicit RDP hidden bytes; they do not prove all
+emulated CPU bus hidden-bit effects.
+
+Copy's delayed byte-write history remains unimplemented. A copy draw marks
+the hidden layer unavailable until reset; replay removes any older `.hidden`
+file at the same prefix instead of allowing stale data to pass a comparison.
+This is a state foundation, not completion of Z compare, Blender, AA, VI,
+copy hidden writes, save-state restoration or C4/M6.
+
+Validation: full build/package passed; fresh-output `scripts/test.py` with
+`MTL_DEBUG_LAYER=1` passed, including all 64 CTest cases and relocated-bundle
+regressions. ASan/UBSan triangle replay passed the gradient and primitive-depth
+matrices with whole hidden-state checks. GPU tests ran outside the sandbox with
+authorized device access, not with a CPU substitute.

@@ -158,7 +158,10 @@ EXPORT void CALL RomClosed() {
     if (trace.is_open()) trace.close();
     trace.clear(); capturePath.clear(); captureRecords.clear(); renderer.reset();
 }
-EXPORT void CALL AurumResetVideo() { decoder.reset(); textures = {}; pixels.clear(); width = height = 0; }
+EXPORT void CALL AurumResetVideo() {
+    decoder.reset(); textures = {}; pixels.clear(); width = height = 0;
+    if (renderer) renderer->resetHidden();
+}
 EXPORT void CALL ProcessRDPList() {
     uint32_t current = *info.DPC_CURRENT_REG & 0x00fffff8;
     const uint32_t start = current;

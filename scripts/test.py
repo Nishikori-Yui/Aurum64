@@ -61,7 +61,7 @@ for mode in ("flat", "shaded", "textured", "depth", "depth-gradient", "primitive
                                   capture_output=True, text=True, timeout=30)
         assert rendered.returncode == 0, rendered.stderr
         assert json.loads(rendered.stdout)["unsupported"] == 0, rendered.stdout
-        run([root / ".build/native/aurum-reference-diff", expected, actual, capture])
+        run([root / ".build/native/aurum-reference-diff", expected, actual, capture, "--require-hidden"])
         with tempfile.TemporaryDirectory(prefix="aurum-triangle-negative-") as temp:
             damaged = pathlib.Path(temp) / "reference.rdram"
             data = bytearray(pathlib.Path(expected + ".rdram").read_bytes())

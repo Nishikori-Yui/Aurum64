@@ -7,14 +7,16 @@ using namespace metal;
 #include "TriangleColorMath.h"
 #include "DepthMath.h"
 #include "TriangleDepthMath.h"
+#include "HiddenMath.h"
 struct Fill { uint address, width, size, color, x0, y0, x1, y1; };
 struct Scanout { uint origin, stride, size, width, height, xScale, yScale, xOffset, yOffset, length; };
 struct CopyWord { uint word, high, low; };
 struct TriangleWord {
     uint word, high, low;
     int highX, highY, highStart, lowX, lowY, lowStart;
+    uint highHidden, lowHidden;
 };
-static_assert(sizeof(TriangleWord) == 36);
+static_assert(sizeof(TriangleWord) == 44);
 static_assert(sizeof(ShadeParameters) == 84);
 static_assert(sizeof(TriangleTextureParameters) == 192);
 static_assert(sizeof(TriangleColorParameters) == 212);
@@ -23,9 +25,11 @@ static_assert(sizeof(TriangleDepthParameters) == 252);
 kernel void triangleDepth(device uint* ram [[buffer(0)]],
                           device const TriangleWord* plan [[buffer(1)]],
                           constant TriangleDepthParameters& parameters [[buffer(2)]],
+                          device ushort* hidden [[buffer(3)]],
                           uint index [[thread_position_in_grid]]) {
     TriangleWord item = plan[index];
     uint colorWord = ram[item.word];
+    uint colorHidden = hidden[item.word], zHidden = 0;
     uint zWord = 0;
     uint zWordIndex = 0xffffffffu;
     bool haveZWord = false;
@@ -37,6 +41,7 @@ kernel void triangleDepth(device uint* ram [[buffer(0)]],
         zWordIndex = address >> 2;
         if (!haveZWord) {
             zWord = ram[zWordIndex];
+            zHidden = hidden[zWordIndex];
             haveZWord = true;
         }
         const uint shift = (((address >> 1) ^ 1u) & 1u) * 16u;
@@ -47,6 +52,9 @@ kernel void triangleDepth(device uint* ram [[buffer(0)]],
                                thread uint& destination) {
         uint address = 0, stored = 0;
         const uint shift = readZ(x, y, address, stored);
+        colorHidden = hiddenWriteLane(colorHidden, highLane ? 0u : 1u,
+                                      highLane ? item.highHidden : item.lowHidden);
+        zHidden = hiddenWriteLane(zHidden, (address >> 1) & 1u, parameters.dzEncoded);
         const uint pixel = color | (value & 1u);
         if (highLane)
             destination = (destination & 0xffffu) | (pixel << 16);
@@ -61,13 +69,18 @@ kernel void triangleDepth(device uint* ram [[buffer(0)]],
     if (item.low != 0xffffffffu)
         writeLane(item.lowX, item.lowY, item.lowStart, item.low, false, colorWord);
     ram[item.word] = colorWord;
-    if (haveZWord) ram[zWordIndex] = zWord;
+    hidden[item.word] = ushort(colorHidden);
+    if (haveZWord) {
+        ram[zWordIndex] = zWord;
+        hidden[zWordIndex] = ushort(zHidden);
+    }
 }
 
 kernel void triangleColor(device uint* ram [[buffer(0)]],
                           device const TriangleWord* plan [[buffer(1)]],
                           device const ushort* tmem [[buffer(2)]],
                           constant TriangleColorParameters& parameters [[buffer(3)]],
+                          device ushort* hidden [[buffer(4)]],
                           uint index [[thread_position_in_grid]]) {
     TriangleWord item = plan[index];
     const CombinerColor primitive = primitiveCombinerColor(parameters.primitiveColor);
@@ -106,12 +119,17 @@ kernel void triangleColor(device uint* ram [[buffer(0)]],
     if (item.high != 0xffffffffu) value = (value & 0x0000ffffu) | (item.high << 16);
     if (item.low != 0xffffffffu) value = (value & 0xffff0000u) | item.low;
     ram[item.word] = value;
+    uint bits = hidden[item.word];
+    if (item.high != 0xffffffffu) bits = hiddenWriteLane(bits, 0, item.highHidden);
+    if (item.low != 0xffffffffu) bits = hiddenWriteLane(bits, 1, item.lowHidden);
+    hidden[item.word] = ushort(bits);
 }
 
 kernel void triangleTexture(device uint* ram [[buffer(0)]],
                             device const TriangleWord* plan [[buffer(1)]],
                             device const ushort* tmem [[buffer(2)]],
                             constant TriangleTextureParameters& parameters [[buffer(3)]],
+                            device ushort* hidden [[buffer(4)]],
                             uint index [[thread_position_in_grid]]) {
     TriangleWord item = plan[index];
     if (item.high != 0xffffffffu) {
@@ -126,12 +144,17 @@ kernel void triangleTexture(device uint* ram [[buffer(0)]],
     if (item.high != 0xffffffffu) value = (value & 0xffffu) | (item.high << 16);
     if (item.low != 0xffffffffu) value = (value & 0xffff0000u) | item.low;
     ram[item.word] = value;
+    uint bits = hidden[item.word];
+    if (item.high != 0xffffffffu) bits = hiddenWriteLane(bits, 0, item.highHidden);
+    if (item.low != 0xffffffffu) bits = hiddenWriteLane(bits, 1, item.lowHidden);
+    hidden[item.word] = ushort(bits);
 }
 
 kernel void triangleFill(device uint* ram [[buffer(0)]],
                          device const TriangleWord* plan [[buffer(1)]],
                          constant ShadeParameters& shade [[buffer(2)]],
                          constant uint& shaded [[buffer(3)]],
+                         device ushort* hidden [[buffer(4)]],
                          uint index [[thread_position_in_grid]]) {
     TriangleWord item = plan[index];
     if (shaded) {
@@ -146,6 +169,10 @@ kernel void triangleFill(device uint* ram [[buffer(0)]],
     if (item.low != 0xffffffffu)
         value = (value & 0xffff0000u) | item.low;
     ram[item.word] = value;
+    uint bits = hidden[item.word];
+    if (item.high != 0xffffffffu) bits = hiddenWriteLane(bits, 0, item.highHidden);
+    if (item.low != 0xffffffffu) bits = hiddenWriteLane(bits, 1, item.lowHidden);
+    hidden[item.word] = ushort(bits);
 }
 
 kernel void textureCopy(device uint* ram [[buffer(0)]], device const ushort* tmem [[buffer(1)]],
@@ -189,11 +216,13 @@ kernel void textureCopy(device uint* ram [[buffer(0)]], device const ushort* tme
 }
 
 kernel void fillRectangle(device uint* ram [[buffer(0)]], constant Fill& f [[buffer(1)]],
-                          constant uint& length [[buffer(2)]], uint word [[thread_position_in_grid]]) {
+                          constant uint& length [[buffer(2)]],
+                          device ushort* hidden [[buffer(3)]], uint word [[thread_position_in_grid]]) {
     // One invocation owns a complete host word, avoiding overlapping 16-bit stores.
     uint address = word * 4;
     if (address + 4 > length) return;
     uint result = ram[word];
+    uint bits = hidden[word];
     uint count = f.size == 2 ? 2 : 1;
     uint bytes = f.size == 2 ? 2 : 4;
     for (uint lane = 0; lane < count; ++lane) {
@@ -202,16 +231,22 @@ kernel void fillRectangle(device uint* ram [[buffer(0)]], constant Fill& f [[buf
         uint pixel = (pixelAddress - f.address) / bytes;
         uint x = pixel % f.width, y = pixel / f.width;
         if (x < f.x0 || x >= f.x1 || y < f.y0 || y >= f.y1) continue;
-        if (count == 1) result = f.color;
+        if (count == 1) {
+            result = f.color;
+            bits = hiddenWriteLane(bits, 0, (f.color & 0x10000u) ? 3u : 0u);
+            bits = hiddenWriteLane(bits, 1, (f.color & 1u) ? 3u : 0u);
+        }
         else {
             uint halfIndex = pixelAddress >> 1;
             uint hostHalf = halfIndex ^ 1;
             uint shift = (hostHalf & 1) * 16;
             uint fillHalf = (f.color >> ((halfIndex & 1) ? 0 : 16)) & 65535u;
             result = (result & ~(65535u << shift)) | (fillHalf << shift);
+            bits = hiddenWriteLane(bits, lane, (fillHalf & 1u) ? 3u : 0u);
         }
     }
     ram[word] = result;
+    hidden[word] = ushort(bits);
 }
 kernel void scanout(device const uint* ram [[buffer(0)]], device uint* output [[buffer(1)]],
                     constant Scanout& s [[buffer(2)]], uint2 p [[thread_position_in_grid]]) {

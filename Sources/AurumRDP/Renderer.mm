@@ -5,6 +5,7 @@
 #include "TriangleTexture.hpp"
 #include "TriangleColor.hpp"
 #include "TriangleDepth.hpp"
+#include "HiddenMath.h"
 #include "TextureCopy.hpp"
 #import <Metal/Metal.h>
 #include <algorithm>
@@ -16,10 +17,12 @@ struct Renderer::Impl {
     id<MTLCommandQueue> queue;
     id<MTLComputePipelineState> fillPipeline, viPipeline, copyPipeline, trianglePipeline,
         textureTrianglePipeline, colorTrianglePipeline, depthTrianglePipeline;
-    id<MTLBuffer> ram, output;
+    id<MTLBuffer> ram, output, hidden;
+    bool hiddenValid = false;
     bool finish(id<MTLCommandBuffer> command, std::string& error) {
         [command commit]; [command waitUntilCompleted];
         if (command.status != MTLCommandBufferStatusCompleted) {
+            hiddenValid = false;
             error = command.error.localizedDescription.UTF8String ?: "Metal command failed";
             return false;
         }
@@ -46,14 +49,29 @@ bool Renderer::initialize(const char* path, std::string& error) {
         p.depthTrianglePipeline = [p.device newComputePipelineStateWithFunction:[library newFunctionWithName:@"triangleDepth"] error:&e];
         p.queue = [p.device newCommandQueue];
         p.ram = [p.device newBufferWithLength:8 * 1024 * 1024 options:MTLResourceStorageModeShared];
+        p.hidden = [p.device newBufferWithLength:4 * 1024 * 1024 options:MTLResourceStorageModeShared];
         p.output = [p.device newBufferWithLength:640 * 576 * 4 options:MTLResourceStorageModeShared];
         if (!p.fillPipeline || !p.viPipeline || !p.copyPipeline || !p.trianglePipeline ||
             !p.textureTrianglePipeline || !p.colorTrianglePipeline || !p.depthTrianglePipeline ||
-            !p.queue || !p.ram || !p.output) {
+            !p.queue || !p.ram || !p.output || !p.hidden) {
             error = e.localizedDescription.UTF8String ?: "Cannot allocate Metal resources."; return false;
         }
+        resetHidden();
         return true;
     }
+}
+void Renderer::resetHidden() {
+    if (!impl->hidden) return;
+    std::memset(impl->hidden.contents, kHiddenUnwritten, impl->hidden.length);
+    impl->hiddenValid = true;
+}
+bool Renderer::copyHidden(size_t memoryBytes, std::vector<uint8_t>& bytes) const {
+    bytes.clear();
+    if (!impl->hidden || !impl->hiddenValid || !memoryBytes || memoryBytes % 4 ||
+        memoryBytes / 2 > impl->hidden.length) return false;
+    const auto* data = static_cast<const uint8_t*>(impl->hidden.contents);
+    bytes.assign(data, data + memoryBytes / 2);
+    return true;
 }
 bool Renderer::textureCopy(uint8_t* memory, size_t length, const TextureRect& rect,
                            const aurum::tmem::Store& tmem, std::string& error) {
@@ -88,6 +106,9 @@ bool Renderer::textureCopy(uint8_t* memory, size_t length, const TextureRect& re
         [encoder endEncoding];
         if (!p.finish(command, error)) return false;
         memcpy(memory, p.ram.contents, length);
+        // Copy uses byte-lane delayed hidden writes, not the triangle/fill
+        // pair rules. Do not export stale hidden state as a valid layer.
+        p.hiddenValid = false;
         return true;
     }
 }
@@ -122,6 +143,7 @@ bool Renderer::combinerTriangle(uint8_t* memory, size_t length, const Triangle& 
             return false;
         }
         [encoder setComputePipelineState:p.colorTrianglePipeline];
+        [encoder setBuffer:p.hidden offset:0 atIndex:4];
         [encoder setBuffer:p.ram offset:0 atIndex:0];
         [encoder setBuffer:plan offset:0 atIndex:1];
         [encoder setBuffer:texture offset:0 atIndex:2];
@@ -161,6 +183,7 @@ bool Renderer::depthTriangle(uint8_t* memory, size_t length, const Triangle& tri
             return false;
         }
         [encoder setComputePipelineState:p.depthTrianglePipeline];
+        [encoder setBuffer:p.hidden offset:0 atIndex:3];
         [encoder setBuffer:p.ram offset:0 atIndex:0];
         [encoder setBuffer:plan offset:0 atIndex:1];
         [encoder setBytes:&parameters length:sizeof(parameters) atIndex:2];
@@ -201,6 +224,7 @@ bool Renderer::flatTriangle(uint8_t* memory, size_t length, uint32_t framebuffer
         id<MTLCommandBuffer> command = [p.queue commandBuffer];
         id<MTLComputeCommandEncoder> encoder = [command computeCommandEncoder];
         [encoder setComputePipelineState:p.trianglePipeline];
+        [encoder setBuffer:p.hidden offset:0 atIndex:4];
         [encoder setBuffer:p.ram offset:0 atIndex:0];
         [encoder setBuffer:plan offset:0 atIndex:1];
         const ShadeParameters shade = makeShadeParameters(triangle);
@@ -238,6 +262,7 @@ bool Renderer::texturedTriangle(uint8_t* memory, size_t length, const Triangle& 
         id<MTLComputeCommandEncoder> encoder = [command computeCommandEncoder];
         if (!command || !encoder) { error = "Cannot create textured triangle command."; return false; }
         [encoder setComputePipelineState:p.textureTrianglePipeline];
+        [encoder setBuffer:p.hidden offset:0 atIndex:4];
         [encoder setBuffer:p.ram offset:0 atIndex:0];
         [encoder setBuffer:plan offset:0 atIndex:1];
         [encoder setBuffer:texture offset:0 atIndex:2];
@@ -251,7 +276,7 @@ bool Renderer::texturedTriangle(uint8_t* memory, size_t length, const Triangle& 
     }
 }
 bool Renderer::fill(uint8_t* memory, size_t length, const Fill& f, std::string& error) {
-    if (!impl->ram || !length || length % 4 || length > impl->ram.length || !f.width ||
+    if (!memory || !impl->ram || !length || length % 4 || length > impl->ram.length || !f.width ||
         (f.size != 2 && f.size != 3) || f.address >= length || f.address % (f.size == 2 ? 2 : 4)) {
         error = "Invalid RDP framebuffer address or memory size."; return false;
     }
@@ -263,6 +288,7 @@ bool Renderer::fill(uint8_t* memory, size_t length, const Fill& f, std::string& 
         id<MTLCommandBuffer> command = [p.queue commandBuffer];
         id<MTLComputeCommandEncoder> encoder = [command computeCommandEncoder];
         [encoder setComputePipelineState:p.fillPipeline];
+        [encoder setBuffer:p.hidden offset:0 atIndex:3];
         [encoder setBuffer:p.ram offset:0 atIndex:0];
         [encoder setBytes:&f length:sizeof(f) atIndex:1];
         [encoder setBytes:&bytes length:sizeof(bytes) atIndex:2];

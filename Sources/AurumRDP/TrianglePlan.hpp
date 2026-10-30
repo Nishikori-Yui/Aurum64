@@ -16,8 +16,9 @@ struct TriangleWord {
     uint32_t low = UINT32_MAX;
     int32_t highX = 0, highY = 0, highStart = 0;
     int32_t lowX = 0, lowY = 0, lowStart = 0;
+    uint32_t highHidden = 0, lowHidden = 0;
 };
-static_assert(sizeof(TriangleWord) == 36);
+static_assert(sizeof(TriangleWord) == 44);
 static_assert(sizeof(ShadeParameters) == 84);
 
 inline bool makeFlatTrianglePlan(const Triangle& triangle, size_t memoryBytes,
@@ -63,9 +64,11 @@ inline bool makeFlatTrianglePlan(const Triangle& triangle, size_t memoryBytes,
             const int32_t start = shadeScanStart(triangle, span);
             if (address & 2u) {
                 target.low = value;
+                target.lowHidden = (std::popcount(mask) - 1) & 3u;
                 target.lowX = x; target.lowY = span.y; target.lowStart = start;
             } else {
                 target.high = value;
+                target.highHidden = (std::popcount(mask) - 1) & 3u;
                 target.highX = x; target.highY = span.y; target.highStart = start;
             }
         }

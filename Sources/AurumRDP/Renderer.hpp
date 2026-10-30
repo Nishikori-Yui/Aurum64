@@ -14,6 +14,9 @@ public:
     Renderer();
     ~Renderer();
     bool initialize(const char* library, std::string& error);
+    void resetHidden();
+    // False means an unmodeled hidden-state writer occurred in this session.
+    bool copyHidden(size_t memoryBytes, std::vector<uint8_t>& bytes) const;
     bool fill(uint8_t* memory, size_t length, const Fill& fill, std::string& error);
     bool textureCopy(uint8_t* memory, size_t length, const TextureRect& rect,
                      const aurum::tmem::Store& tmem, std::string& error);

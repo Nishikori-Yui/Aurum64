@@ -70,7 +70,7 @@ interpolation, RGBA16 point fetch and the supported selector equation.
 and MSL. The row anchor, edge/Y correction, fractional-X correction, clipped
 X stepping and nine-bit clamp are all exercised against an external renderer,
 not merely against the shared helper.
-Independent CPU tests compare whole RDRAM and written low coverage bits with
+Independent CPU tests compare whole RDRAM and the complete hidden-state layer with
 the pinned reference, including a shade-times-TEXEL0 fixture. Metal replay also
 passes those independent differential fixtures. The selected RGBA16 TEXEL0 path
 supports point sampling with affine or perspective coordinates, and the
@@ -97,8 +97,24 @@ its source-selection bit bypasses interpolated Z and uses the supplied delta.
 Color and Z must have matching word alignment and non-aliasing write-word sets;
 preflight rejects conflicting words before dispatch rather than allowing GPU
 write races. The 252-byte depth parameters carry coefficients, not rendered Z.
-Z compare, two-cycle combiner,
-blender, persistent hidden coverage, LOD and filtered VI remain unfinished.
+Z compare, two-cycle combiner, blender, LOD and filtered VI remain unfinished.
+
+The renderer owns one persistent hidden byte per guest halfword, represented
+as two physical bits or an unwritten marker (4), matching the reference export.
+Unwritten entries resolve from the current halfword low bit on reads; explicit
+RDP writes survive external RDRAM byte changes. Fill16/32 stores the replicated
+low bits, triangle color stores the coverage low bits, and Z update stores the
+encoded delta-Z low bits. The 44-byte triangle plan carries both lanes' hidden
+coverage. Each Metal invocation owns a hidden ushort paired with its RDRAM
+word; no adjacent threads read-modify-write the same hidden pair. Reset/new
+sessions clear this state, and synchronous completion precedes inspection.
+
+Copy-cycle byte-lane delayed hidden writes are not modeled yet: a copy draw
+invalidates hidden-layer export until reset, without changing existing color
+support. Command failures similarly invalidate the layer. No depth-compare or
+VI-filter path may consume it as valid state. CPU-originated hidden-bit bus
+effects, delayed write history and serialized restoration still need their own
+model and evidence; v1 memory records only replace visible RDRAM bytes.
 
 The isolated point-fetch helper also decodes IA8, IA16 and I8 from
 reference-verified TMEM layouts. This is a sampler/test capability only: those
@@ -141,6 +157,9 @@ It has no software texture-draw fallback. Scalar replay still reports texture
 draws as unsupported. Independent differential fixtures check all framebuffer
 bytes and TMEM, including a draw-to-upload dependency within one submission.
 The neutral v1 state summary remains a comparison subset, not a full save state.
+For modeled fill/triangle sessions it also exports the entire `.hidden` layer.
+The mandatory `--require-hidden` differential option rejects absent files;
+unsupported sessions omit the layer and remove stale output at a reused prefix.
 
 ## Audio and controls
 

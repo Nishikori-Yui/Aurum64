@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <filesystem>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -299,6 +300,15 @@ int main(int argc, char** argv) {
             return output.textures.load(output.rdram.data(), output.rdram.size(), load);
         };
         replay(decoder, output, records);
+        bool hiddenAvailable = false;
+#ifdef AURUM_METAL_REPLAY
+        std::vector<uint8_t> hiddenBytes;
+        hiddenAvailable = decoder.unsupported == 0 && renderer.copyHidden(output.rdram.size(), hiddenBytes);
+        if (emitLayers && hiddenAvailable)
+            write(prefix, ".hidden", hiddenBytes.data(), hiddenBytes.size());
+#endif
+        // Reusing an output prefix must not leave a stale, apparently valid layer.
+        if (emitLayers && !hiddenAvailable) std::filesystem::remove(prefix + ".hidden");
         if (emitLayers) {
             write(prefix, ".rdram", output.rdram.data(), output.rdram.size());
             // TMEM in hardware byte layout so it is directly comparable with
@@ -348,6 +358,8 @@ int main(int argc, char** argv) {
                         "geometry=little-endian-uint32-pairs:width-height-per-vi\n"
                         "checkpoints=little-endian-uint64-sextuples:type-record-submission-command-vi-hash\n";
             manifest << "states=256-byte-little-endian-uint32-grid:v1:49-named-rdp-fields\n";
+            if (hiddenAvailable)
+                manifest << "hidden=oneBytePer16BitPixel:twoBits-with-unwritten-marker4\n";
         }
 
         std::printf("{\"records\":%zu,\"submissions\":%llu,\"commands\":%llu,"

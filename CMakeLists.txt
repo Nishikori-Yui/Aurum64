@@ -42,7 +42,7 @@ add_custom_command(OUTPUT AurumRDP.metallib
         Sources/AurumRDP/TriangleTextureMath.h Sources/AurumRDP/PerspectiveMath.h
         Sources/AurumRDP/TextureDepthMath.h Sources/AurumRDP/CombinerMath.h
         Sources/AurumRDP/TriangleColorMath.h Sources/AurumRDP/DepthMath.h
-        Sources/AurumRDP/TriangleDepthMath.h VERBATIM)
+        Sources/AurumRDP/TriangleDepthMath.h Sources/AurumRDP/HiddenMath.h VERBATIM)
 add_custom_target(shaders ALL DEPENDS AurumRDP.metallib)
 add_executable(aurum-rdp-tests Tests/RDPTests.cpp)
 target_link_libraries(aurum-rdp-tests PRIVATE aurum-rdp)
@@ -152,7 +152,7 @@ add_test(NAME triangle-metal COMMAND aurum-metal-replay
     "${TRIANGLE_FIXTURES}/matrix.aurcap" "${TRIANGLE_FIXTURES}/metal" "${CMAKE_BINARY_DIR}/AurumRDP.metallib")
 set_tests_properties(triangle-metal PROPERTIES FIXTURES_REQUIRED triangle-input FIXTURES_SETUP triangle-metal)
 add_test(NAME triangle-metal-differential COMMAND aurum-reference-diff
-    "${TRIANGLE_FIXTURES}/reference" "${TRIANGLE_FIXTURES}/metal" "${TRIANGLE_FIXTURES}/matrix.aurcap")
+    "${TRIANGLE_FIXTURES}/reference" "${TRIANGLE_FIXTURES}/metal" "${TRIANGLE_FIXTURES}/matrix.aurcap" --require-hidden)
 set_tests_properties(triangle-metal-differential PROPERTIES FIXTURES_REQUIRED "triangle-reference;triangle-metal")
 add_test(NAME alpha-compare-triangle-generate COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_SOURCE_DIR}/scripts/make_triangle_fixtures.py"
@@ -173,7 +173,7 @@ set_tests_properties(alpha-compare-triangle-metal PROPERTIES
     FIXTURES_REQUIRED alpha-compare-triangle-input FIXTURES_SETUP alpha-compare-triangle-metal)
 add_test(NAME alpha-compare-triangle-metal-differential COMMAND aurum-reference-diff
     "${TRIANGLE_FIXTURES}/alpha-compare-reference" "${TRIANGLE_FIXTURES}/alpha-compare-metal"
-    "${TRIANGLE_FIXTURES}/alpha-compare.aurcap")
+    "${TRIANGLE_FIXTURES}/alpha-compare.aurcap" --require-hidden)
 set_tests_properties(alpha-compare-triangle-metal-differential PROPERTIES
     FIXTURES_REQUIRED "alpha-compare-triangle-reference;alpha-compare-triangle-metal")
 add_test(NAME depth-triangle-generate COMMAND "${Python3_EXECUTABLE}"
@@ -195,7 +195,7 @@ set_tests_properties(depth-triangle-metal PROPERTIES
     FIXTURES_REQUIRED depth-triangle-input FIXTURES_SETUP depth-triangle-metal)
 add_test(NAME depth-triangle-metal-differential COMMAND aurum-reference-diff
     "${TRIANGLE_FIXTURES}/depth-reference" "${TRIANGLE_FIXTURES}/depth-metal"
-    "${TRIANGLE_FIXTURES}/depth.aurcap")
+    "${TRIANGLE_FIXTURES}/depth.aurcap" --require-hidden)
 set_tests_properties(depth-triangle-metal-differential PROPERTIES
     FIXTURES_REQUIRED "depth-triangle-reference;depth-triangle-metal")
 foreach(mode IN ITEMS depth-gradient primitive-depth)
@@ -217,7 +217,7 @@ foreach(mode IN ITEMS depth-gradient primitive-depth)
         FIXTURES_REQUIRED ${mode}-input FIXTURES_SETUP ${mode}-metal)
     add_test(NAME ${mode}-metal-differential COMMAND aurum-reference-diff
         "${TRIANGLE_FIXTURES}/${mode}-reference" "${TRIANGLE_FIXTURES}/${mode}-metal"
-        "${TRIANGLE_FIXTURES}/${mode}.aurcap")
+        "${TRIANGLE_FIXTURES}/${mode}.aurcap" --require-hidden)
     set_tests_properties(${mode}-metal-differential PROPERTIES
         FIXTURES_REQUIRED "${mode}-reference;${mode}-metal")
 endforeach()
@@ -234,7 +234,7 @@ add_test(NAME shade-metal COMMAND aurum-metal-replay
     "${TRIANGLE_FIXTURES}/shade.aurcap" "${TRIANGLE_FIXTURES}/shade-metal" "${CMAKE_BINARY_DIR}/AurumRDP.metallib")
 set_tests_properties(shade-metal PROPERTIES FIXTURES_REQUIRED shade-input FIXTURES_SETUP shade-metal)
 add_test(NAME shade-metal-differential COMMAND aurum-reference-diff
-    "${TRIANGLE_FIXTURES}/shade-reference" "${TRIANGLE_FIXTURES}/shade-metal" "${TRIANGLE_FIXTURES}/shade.aurcap")
+    "${TRIANGLE_FIXTURES}/shade-reference" "${TRIANGLE_FIXTURES}/shade-metal" "${TRIANGLE_FIXTURES}/shade.aurcap" --require-hidden)
 set_tests_properties(shade-metal-differential PROPERTIES FIXTURES_REQUIRED "shade-reference;shade-metal")
 add_test(NAME shade-textured-triangle-generate COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_SOURCE_DIR}/scripts/make_triangle_fixtures.py"
@@ -255,7 +255,7 @@ set_tests_properties(shade-textured-triangle-metal PROPERTIES
     FIXTURES_REQUIRED shade-textured-triangle-input FIXTURES_SETUP shade-textured-triangle-metal)
 add_test(NAME shade-textured-triangle-metal-differential COMMAND aurum-reference-diff
     "${TRIANGLE_FIXTURES}/shade-textured-reference" "${TRIANGLE_FIXTURES}/shade-textured-metal"
-    "${TRIANGLE_FIXTURES}/shade-textured.aurcap")
+    "${TRIANGLE_FIXTURES}/shade-textured.aurcap" --require-hidden)
 set_tests_properties(shade-textured-triangle-metal-differential PROPERTIES
     FIXTURES_REQUIRED "shade-textured-triangle-reference;shade-textured-triangle-metal")
 add_test(NAME textured-triangle-generate COMMAND "${Python3_EXECUTABLE}"
@@ -271,7 +271,7 @@ add_test(NAME textured-triangle-metal COMMAND aurum-metal-replay
     "${TRIANGLE_FIXTURES}/textured.aurcap" "${TRIANGLE_FIXTURES}/textured-metal" "${CMAKE_BINARY_DIR}/AurumRDP.metallib")
 set_tests_properties(textured-triangle-metal PROPERTIES FIXTURES_REQUIRED textured-triangle-input FIXTURES_SETUP textured-triangle-metal)
 add_test(NAME textured-triangle-metal-differential COMMAND aurum-reference-diff
-    "${TRIANGLE_FIXTURES}/textured-reference" "${TRIANGLE_FIXTURES}/textured-metal" "${TRIANGLE_FIXTURES}/textured.aurcap")
+    "${TRIANGLE_FIXTURES}/textured-reference" "${TRIANGLE_FIXTURES}/textured-metal" "${TRIANGLE_FIXTURES}/textured.aurcap" --require-hidden)
 set_tests_properties(textured-triangle-metal-differential PROPERTIES FIXTURES_REQUIRED "textured-triangle-reference;textured-triangle-metal")
 add_executable(aurum-texture-copy-tests Tests/TextureCopyTests.cpp)
 target_link_libraries(aurum-texture-copy-tests PRIVATE aurum-rdp)
@@ -282,3 +282,13 @@ target_compile_options(aurum-presentation-tests PRIVATE -fobjc-arc)
 target_link_libraries(aurum-presentation-tests PRIVATE "-framework Metal" "-framework Foundation")
 add_dependencies(aurum-presentation-tests shaders)
 add_test(NAME presentation COMMAND aurum-presentation-tests "${CMAKE_BINARY_DIR}/AurumRDP.metallib")
+add_executable(aurum-hidden-tests Tests/HiddenTests.cpp)
+target_link_libraries(aurum-hidden-tests PRIVATE aurum-rdp)
+add_dependencies(aurum-hidden-tests shaders)
+add_test(NAME hidden-metal COMMAND aurum-hidden-tests "${CMAKE_BINARY_DIR}/AurumRDP.metallib")
+add_test(NAME hidden-negative COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_SOURCE_DIR}/Tests/hidden_negative.py" "${CMAKE_BINARY_DIR}")
+set_tests_properties(hidden-negative PROPERTIES FIXTURES_REQUIRED
+    "primitive-depth-reference;primitive-depth-metal")
+add_test(NAME hidden-sequence-metal COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_SOURCE_DIR}/Tests/hidden_sequence.py" "${CMAKE_BINARY_DIR}")
