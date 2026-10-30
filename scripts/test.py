@@ -13,7 +13,9 @@ root = pathlib.Path(__file__).resolve().parent.parent
 tests = pathlib.Path(os.environ.get("AURUM_TEST_OUTPUT_DIR", root / ".build/tests")).resolve()
 tests.mkdir(parents=True, exist_ok=True)
 def run(args, **kwargs):
-    subprocess.run([str(x) for x in args], cwd=root, check=True, timeout=45, **kwargs)
+    # The full Metal matrix includes ordered depth-sequence replay on hosted
+    # runners; bound the whole command without making slow CI look hung.
+    subprocess.run([str(x) for x in args], cwd=root, check=True, timeout=120, **kwargs)
 
 run(["ctest", "--test-dir", root / ".build/native", "--output-on-failure"])
 # The CTest fixture chain always runs the independent coordinate reference.
